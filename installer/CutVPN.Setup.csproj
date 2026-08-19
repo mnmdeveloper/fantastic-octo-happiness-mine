@@ -10,6 +10,6 @@
     <RootNamespace>CutVPN.Setup</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="Program.Release.cs" />
+    <Compile Include="Program.Good.cs" />
   </ItemGroup>
 </Project>
