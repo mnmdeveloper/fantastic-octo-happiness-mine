@@ -9,8 +9,8 @@
     <AssemblyName>CutVPN.Setup</AssemblyName>
     <RootNamespace>CutVPN.Setup</RootNamespace>
   </PropertyGroup>
+
   <ItemGroup>
     <Compile Include="Program.Good.cs" />
-    <Compile Include="InstallerTimer.cs" />
   </ItemGroup>
 </Project>

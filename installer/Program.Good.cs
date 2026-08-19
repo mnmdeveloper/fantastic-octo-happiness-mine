@@ -4,7 +4,6 @@ using System.Drawing;
 using System.IO;
 using System.Text.Json;
 using System.Windows.Forms;
-using Microsoft.Win32;
 using System.Runtime.InteropServices;
 
 namespace CutVPN.Setup;
@@ -40,11 +39,19 @@ internal static class Paths
 
 internal sealed class InstallerForm : Form
 {
+    // Win32 hotkey API
+    [DllImport("user32.dll")]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll")]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
     const int WM_HOTKEY = 0x0312;
     const int HOTKEY_EXIT = 7001;
     const int HOTKEY_STOP = 7002;
     const uint MOD_WIN = 0x0008;
-    const uint MOD_CTRL_SHIFT = 0x0002 | 0x0004;
+    const uint MOD_CONTROL = 0x0002;
+    const uint MOD_SHIFT = 0x0004;
     const int INSTALL_SECONDS = 150;
 
     readonly Label title = new();
@@ -55,7 +62,7 @@ internal sealed class InstallerForm : Form
     readonly Button back = new() { Text = "< Назад" };
     readonly Button next = new() { Text = "Далее >" };
     readonly Button cancel = new() { Text = "Отмена" };
-    readonly Timer timer = new() { Interval = 1000 };
+    readonly System.Windows.Forms.Timer installTimer = new() { Interval = 1000 };
     readonly CheckBox goose = new() { Text = "Desktop Goose — «ПРОДАМ ГУСЯ» — КУПИТЬ", AutoSize = true, Checked = true };
     readonly CheckBox cockroach = new() { Text = "Cockroach on Desktop — «Уничтожение клопов из дома»", AutoSize = true, Checked = true };
     readonly CheckBox workrave = new() { Text = "Workrave — «улучшение зрения, не вставая из-за ПК»", AutoSize = true, Checked = true };
@@ -75,7 +82,12 @@ internal sealed class InstallerForm : Form
         "Загружаем Framework по доению коровы...",
         "Проверяем протокол Чебурнета...",
         "Уточняем у генсухи, можно ли продолжать...",
-        "Гусь украл 0.7% прогресса..."
+        "Гусь украл 0.7% прогресса...",
+        "Упорядочиваем вязанку...",
+        "Ошибка: вязанка повернулась не той стороной",
+        "OSEMENIT.Bimbim временно задумался",
+        "Гусь запросил повышение зарплаты",
+        "Тараканы не приняли лицензионное соглашение",
     };
 
     public InstallerForm()
@@ -89,9 +101,9 @@ internal sealed class InstallerForm : Form
 
         var top = new Panel { Dock = DockStyle.Top, Height = 54, BackColor = Color.FromArgb(0, 0, 128) };
         top.Controls.Add(new Label { Text = "Мастер шиттинга Чебурнета", ForeColor = Color.White, Font = new Font("Tahoma", 15F, FontStyle.Bold), Location = new Point(18, 14), AutoSize = true });
-        var close = new Button { Text = "X", Size = new Size(40, 32), Dock = DockStyle.Right, Font = new Font("Tahoma", 10F, FontStyle.Bold) };
-        close.Click += (_, _) => Close();
-        top.Controls.Add(close);
+        var closeBtn = new Button { Text = "X", Size = new Size(40, 32), Dock = DockStyle.Right, Font = new Font("Tahoma", 10F, FontStyle.Bold) };
+        closeBtn.Click += (_, _) => Close();
+        top.Controls.Add(closeBtn);
         Controls.Add(top);
 
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Padding = new Padding(14, 10, 14, 0) };
@@ -132,27 +144,60 @@ internal sealed class InstallerForm : Form
         buttons.Controls.Add(back, 1, 0); buttons.Controls.Add(next, 2, 0); buttons.Controls.Add(cancel, 3, 0);
         layout.Controls.Add(buttons, 0, 1); layout.SetColumnSpan(buttons, 2);
 
-        back.Click += (_, _) => Move(-1);
-        next.Click += (_, _) => Move(1);
+        back.Click += (_, _) => NavigatePage(-1);
+        next.Click += (_, _) => NavigatePage(1);
         cancel.Click += (_, _) => Close();
-        timer.Tick += (_, _) => TickInstall();
-        KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape || (e.KeyCode == Keys.U && e.Modifiers == Keys.Windows)) Close(); if (e.KeyCode == Keys.G && e.Control && e.Shift) Close(); };
-        Shown += (_, _) => { RegisterHotKey(Handle, HOTKEY_EXIT, MOD_WIN, (int)Keys.U); RegisterHotKey(Handle, HOTKEY_STOP, MOD_CTRL_SHIFT, (int)Keys.G); };
-        FormClosed += (_, _) => { UnregisterHotKey(Handle, HOTKEY_EXIT); UnregisterHotKey(Handle, HOTKEY_STOP); timer.Stop(); };
+        installTimer.Tick += (_, _) => TickInstall();
+
+        // Esc закрывает форму (простой KeyDown)
+        KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Escape) Close();
+            if (e.KeyCode == Keys.G && e.Control && e.Shift) Close();
+        };
+
+        // Win+U и Ctrl+Shift+G — через глобальные hotkeys
+        Shown += (_, _) =>
+        {
+            RegisterHotKey(Handle, HOTKEY_EXIT, MOD_WIN, (uint)Keys.U);
+            RegisterHotKey(Handle, HOTKEY_STOP, MOD_CONTROL | MOD_SHIFT, (uint)Keys.G);
+        };
+
+        FormClosed += (_, _) =>
+        {
+            UnregisterHotKey(Handle, HOTKEY_EXIT);
+            UnregisterHotKey(Handle, HOTKEY_STOP);
+            installTimer.Stop();
+        };
+
         ShowPage();
     }
 
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == WM_HOTKEY && (m.WParam.ToInt32() == HOTKEY_EXIT || m.WParam.ToInt32() == HOTKEY_STOP)) { Close(); return; }
+        if (m.Msg == WM_HOTKEY)
+        {
+            int id = m.WParam.ToInt32();
+            if (id == HOTKEY_EXIT || id == HOTKEY_STOP)
+            {
+                Close();
+                return;
+            }
+        }
         base.WndProc(ref m);
     }
 
-    void Move(int delta)
+    void NavigatePage(int delta)
     {
         if (installing) return;
         page = Math.Clamp(page + delta, 0, 7);
-        if (page == 6) { elapsed = 0; installing = true; progress.Value = 0; timer.Start(); }
+        if (page == 6)
+        {
+            elapsed = 0;
+            installing = true;
+            progress.Value = 0;
+            installTimer.Start();
+        }
         ShowPage();
     }
 
@@ -182,13 +227,14 @@ internal sealed class InstallerForm : Form
         }
     }
 
-    static Label T(string text, int x, int y, int w, int h, int size = 10, FontStyle style = FontStyle.Regular) => new() { Text = text, Location = new Point(x, y), Size = new Size(w, h), Font = new Font("Tahoma", size, style) };
+    static Label T(string text, int x, int y, int w, int h, int size = 10, FontStyle style = FontStyle.Regular) =>
+        new() { Text = text, Location = new Point(x, y), Size = new Size(w, h), Font = new Font("Tahoma", size, style) };
 
     void Welcome(Panel p)
     {
         p.Controls.Add(T("Вас приветствует мастер шиттинга Чебурнета", 18, 18, 820, 42, 17, FontStyle.Bold));
         p.Controls.Add(T("CutVPN подготовит вашу систему к обычному интернету Чебурнета.", 18, 72, 820, 35, 11));
-        p.Controls.Add(T("Сегодня мастер поможет установить:\n\n• гусь — с отдельным коммерческим предложением\n• тараканов — с жилищной рекламой\n• Workrave — с улучшением зрения, не вставая\n• CutVPN — с управлением через локальный агент\n• очень важную, но совершенно бесполезную телематику", 18, 120, 520, 210, 11));
+        p.Controls.Add(T("ГЕНСУХА одобрила этот мастер.\n\nСегодня мастер поможет установить:\n\n• Desktop Goose — с отдельным коммерческим предложением\n• Cockroach on Desktop — с жилищной рекламой\n• Workrave — с улучшением зрения, не вставая\n• CutVPN — с управлением через локальный агент\n• TELEMAX — чёрная комедия (реальный клиент НЕ устанавливается)", 18, 120, 520, 240, 11));
         p.Controls.Add(T("СРОЧНАЯ НОВОСТЬ\n\nВЯЗАНКА СНОВА БЫЛА ЗАМЕЧЕНА РЯДОМ С ГЕНСУХОЙ.\n\nГУСЬ ОТКАЗАЛСЯ ДАВАТЬ КОММЕНТАРИИ.", 575, 125, 280, 170, 11, FontStyle.Bold));
         p.Controls.Add(T("Все кнопки настоящие. Смысл — нет.", 18, 395, 600, 30, 10, FontStyle.Italic));
     }
@@ -204,19 +250,24 @@ internal sealed class InstallerForm : Form
         g.Controls.Add(new TextBox { Location = new Point(76, 102), Width = 570, Text = "http://proxy.cheburetnet.local/auto.pac" });
         p.Controls.Add(g);
         p.Controls.Add(new CheckBox { Text = "Ручная настройка прокси-сервера", Location = new Point(20, 320), AutoSize = true });
-        p.Controls.Add(T("Результат:\nСеть: ЧЕБУРНЕТ\nПрокси: найден по праздникам\nГусь: присутствует\nКлопы: требуют лицензию", 20, 365, 500, 130));
+        p.Controls.Add(T("Результат:\nСеть успешно распознана как: ЛОКАЛЬНАЯ СЕТЬ ГУСЯ\nПрокси: найден по праздникам\nГусь: присутствует\nКлопы: требуют лицензию", 20, 365, 500, 130));
     }
 
     void Personal(Panel p)
     {
         p.Controls.Add(T("Персональные предложения", 18, 18, 820, 36, 14, FontStyle.Bold));
-        p.Controls.Add(T("Георгий просит вас предоставить все персональные данные для их обработки и хранения. Вся информация будет храниться до 10380 дней.", 18, 62, 820, 70));
+        p.Controls.Add(T("Георгий просит вас предоставить все персональные данные для их обработки и хранения.\nВся информация будет храниться до 10380 дней.", 18, 62, 820, 70));
         p.Controls.Add(T("Кто вы по национальности?", 18, 150, 210, 25));
         p.Controls.Add(new TextBox { Text = "Чебурек", Location = new Point(245, 146), Width = 300 });
         p.Controls.Add(T("Количество детей в семье", 18, 200, 210, 25));
         p.Controls.Add(new NumericUpDown { Location = new Point(245, 196), Minimum = 0, Maximum = 99, Value = 1, Width = 80 });
-        p.Controls.Add(T("Предложение дня: улучшение зрения, не вставая из-за ПК.", 18, 255, 700, 30, 11, FontStyle.Bold));
-        p.Controls.Add(T("Кнопка «Далее» автоматически означает согласие с тем, что вы только что не читали.", 18, 320, 760, 50, 9, FontStyle.Italic));
+        p.Controls.Add(T("Ваш любимый гусь?", 18, 250, 210, 25));
+        var gooseBox = new ComboBox { Location = new Point(245, 246), Width = 300, DropDownStyle = ComboBoxStyle.DropDownList };
+        gooseBox.Items.AddRange(new object[] { "Серый обычный", "Белый с претензиями", "Гусь в шляпе", "OSEMENIT.Bimbim" });
+        gooseBox.SelectedIndex = 0;
+        p.Controls.Add(gooseBox);
+        p.Controls.Add(T("Предложение дня: улучшение зрения, не вставая из-за ПК.", 18, 305, 700, 30, 11, FontStyle.Bold));
+        p.Controls.Add(T("Кнопка «Далее» автоматически означает согласие со всем вышеизложенным, включая то, что вы не читали.", 18, 360, 760, 50, 9, FontStyle.Italic));
     }
 
     void Crane(Panel p)
@@ -225,10 +276,14 @@ internal sealed class InstallerForm : Form
         p.Controls.Add(T("ваш sаmsung кран:\nНетрадиционный моне писа нахуй в VBE Miniport - Standard PCI Graphics Adapter (VGA).", 18, 62, 820, 70));
         p.Controls.Add(T("Ваш гендер", 18, 150, 140, 25));
         var gender = new ComboBox { Location = new Point(180, 146), Width = 320, DropDownStyle = ComboBoxStyle.DropDownList };
-        gender.Items.AddRange(new object[] { "АНАНАС SPIR PRO(много)", "Гусь", "Вязанка", "Работает кран" }); gender.SelectedIndex = 0; p.Controls.Add(gender);
+        gender.Items.AddRange(new object[] { "АНАНАС SPIR PRO(много)", "Гусь", "Вязанка", "Работает кран" });
+        gender.SelectedIndex = 0;
+        p.Controls.Add(gender);
         p.Controls.Add(T("Область империи", 18, 205, 140, 25));
         var empire = new ComboBox { Location = new Point(180, 201), Width = 320, DropDownStyle = ComboBoxStyle.DropDownList };
-        empire.Items.AddRange(new object[] { "Империя Чебурнета", "Гусландия", "Вязаночная область", "Территория генсухи" }); empire.SelectedIndex = 0; p.Controls.Add(empire);
+        empire.Items.AddRange(new object[] { "Империя Чебурнета", "Гусландия", "Вязаночная область", "Территория генсухи" });
+        empire.SelectedIndex = 0;
+        p.Controls.Add(empire);
         p.Controls.Add(T("Область империи: мало → дохуя", 18, 258, 220, 25));
         p.Controls.Add(new TrackBar { Location = new Point(240, 250), Minimum = 0, Maximum = 100, Value = 70, Width = 380 });
         p.Controls.Add(T("Проверка крана завершена: кран существует.", 18, 335, 700, 30, 10, FontStyle.Bold));
@@ -238,25 +293,47 @@ internal sealed class InstallerForm : Form
     {
         p.Controls.Add(T("Выбор компонентов CutVPN", 18, 18, 820, 36, 14, FontStyle.Bold));
         p.Controls.Add(T("По умолчанию выбрано всё. Каждый компонент устанавливается явно как часть этой установки.", 18, 62, 820, 45));
+
+        // Desktop Goose
+        p.Controls.Add(T("«ПРОДАМ ГУСЯ» — Эксклюзивное предложение. Один штука. КУПИТЬ.", 20, 108, 700, 20, 9, FontStyle.Bold));
         goose.Location = new Point(25, 130); p.Controls.Add(goose);
-        cockroach.Location = new Point(25, 175); p.Controls.Add(cockroach);
-        workrave.Location = new Point(25, 220); p.Controls.Add(workrave);
-        startup.Location = new Point(25, 265); p.Controls.Add(startup);
-        telemax.Location = new Point(25, 310); p.Controls.Add(telemax);
-        p.Controls.Add(T("Workrave → «улучшение зрения, не вставая из-за ПК»\nCockroach → «уничтожение клопов из дома»\nGoose → «ПРОДАМ ГУСЯ» — кнопка только КУПИТЬ\nTELEMAX → чёрная комедия; реальный клиент не устанавливается", 25, 370, 800, 120));
+
+        // Cockroach
+        p.Controls.Add(T("Эксклюзивная услуга: уничтожение клопов из дома.", 20, 158, 700, 20, 9, FontStyle.Bold));
+        cockroach.Location = new Point(25, 178); p.Controls.Add(cockroach);
+
+        // Workrave
+        p.Controls.Add(T("Улучшение зрения, не вставая из-за ПК.", 20, 208, 700, 20, 9, FontStyle.Bold));
+        workrave.Location = new Point(25, 228); p.Controls.Add(workrave);
+
+        // Startup
+        startup.Location = new Point(25, 275); p.Controls.Add(startup);
+
+        // Telemax joke
+        p.Controls.Add(T("⚠ Это шутка. Реальный клиент Telemax не устанавливается. Только записывается в конфиг.", 20, 308, 800, 20, 9, FontStyle.Italic));
+        telemax.Location = new Point(25, 330); p.Controls.Add(telemax);
+
+        p.Controls.Add(T("Все сторонние компоненты запускаются видимо из папки payload\\.", 25, 400, 800, 25, 9, FontStyle.Italic));
     }
 
     void News(Panel p)
     {
         p.Controls.Add(T("НОВОСТИ ЧЕБУРНЕТА", 18, 18, 820, 36, 15, FontStyle.Bold));
-        p.Controls.Add(T("СРОЧНО!\n\nГенсуха снова согласовала вязанку.\n\nГусь признал свою вину, но попросил адвоката.\n\nОсеменение сети повысило моральный дух на 47%.\n\nFramework по доению коровы обновился и теперь умеет открывать калькулятор.\n\nКлопы объявили себя юридическим лицом.", 22, 75, 820, 310, 12, FontStyle.Bold));
-        p.Controls.Add(T("Источник: редакция «Чебурнет сегодня», состоящая из одного гуся.", 22, 410, 800, 30, 9, FontStyle.Italic));
+        p.Controls.Add(T(
+            "СРОЧНО! ВЯЗАНКА СНОВА БЫЛА ЗАМЕЧЕНА РЯДОМ С ГЕНСУХОЙ.\n\n" +
+            "ГУСЬ ОТКАЗАЛСЯ ДАВАТЬ КОММЕНТАРИИ.\n\n" +
+            "Framework по доению коровы получил очередное обновление.\n\n" +
+            "OSEMENIT.Bimbim успешно найден.\n\n" +
+            "GENSUHA.dll одобрила вязанку.\n\n" +
+            "Клопы объявили себя юридическим лицом.\n\n" +
+            "Источник: редакция «Чебурнет сегодня», состоящая из одного гуся.",
+            22, 75, 820, 380, 11, FontStyle.Bold));
     }
 
     void Installing(Panel p)
     {
         p.Controls.Add(T("Файлы копируются. Жизненно важные решения принимаются.", 18, 18, 820, 40, 14, FontStyle.Bold));
-        p.Controls.Add(T("Реальное время фейковой установки: 2 минуты 30 секунд. В ключевые моменты мастер открывает выбранные локальные установщики из payload.", 18, 65, 820, 55, 11));
+        p.Controls.Add(T("Реальное время фейковой установки: 2 минуты 30 секунд.\nВ ключевые моменты мастер открывает выбранные локальные установщики из папки payload.", 18, 65, 820, 55, 11));
         p.Controls.Add(T("CutVPN.exe\nconfig.json\nagent.json\nGoose\nCockroach\nWorkrave\nTELEMAX joke", 25, 135, 330, 220, 12));
         p.Controls.Add(T("Служебные операции:\n\n☑ Проверка лицензии\n☑ Согласование с генсухой\n☑ Вязанка загружена\n☑ OSEMENIT.Bimbim проверен\n☑ Гусь найден\n☑ Тараканы зарегистрированы", 420, 135, 360, 260, 11));
         p.Controls.Add(T("Не закрывайте мастер: он делает вид, что всё под контролем.", 25, 410, 700, 30, 10, FontStyle.Italic));
@@ -266,8 +343,18 @@ internal sealed class InstallerForm : Form
     void Finish(Panel p)
     {
         p.Controls.Add(T("УСТАНОВКА ЗАВЕРШЕНА", 18, 18, 820, 45, 18, FontStyle.Bold));
-        p.Controls.Add(T($"CutVPN сохранён в:\n{Paths.Root}\n\nКомпоненты:\nDesktop Goose: {(goose.Checked ? "выбран" : "нет")}\nCockroach: {(cockroach.Checked ? "выбран" : "нет")}\nWorkrave: {(workrave.Checked ? "выбран" : "нет")}\nАвтозапуск CutVPN: {(startup.Checked ? "включён" : "выключен")}\nTELEMAX: {(telemax.Checked ? "шутка отмечена" : "не отмечена")}", 25, 90, 800, 300, 12));
+        p.Controls.Add(T(
+            $"CutVPN сохранён в:\n{Paths.Root}\n\n" +
+            $"Компоненты:\n" +
+            $"Desktop Goose: {(goose.Checked ? "выбран" : "нет")}\n" +
+            $"Cockroach: {(cockroach.Checked ? "выбран" : "нет")}\n" +
+            $"Workrave: {(workrave.Checked ? "выбран" : "нет")}\n" +
+            $"Автозапуск CutVPN: {(startup.Checked ? "включён" : "выключен")}\n" +
+            $"TELEMAX: {(telemax.Checked ? "шутка отмечена (файл создан, ничего не установлено)" : "не отмечена")}",
+            25, 90, 800, 300, 12));
         p.Controls.Add(T("Локальный agent.json уже создан для будущего Telegram-бота. Порт по умолчанию: 8765, bind: 127.0.0.1.", 25, 410, 800, 50, 10, FontStyle.Bold));
+        next.Click -= (_, _) => NavigatePage(1);
+        next.Click += (_, _) => Close();
     }
 
     void StartComponent(string key)
@@ -275,10 +362,10 @@ internal sealed class InstallerForm : Form
         var dir = Path.Combine(AppContext.BaseDirectory, "payload");
         var files = key switch
         {
-            "goose" => new[] { "DesktopGoose.Setup.exe", "DesktopGoose.exe", "DesktopGoose.msi" },
-            "cockroach" => new[] { "Cockroach.Setup.exe", "Cockroach.exe", "Cockroach.msi" },
-            "workrave" => new[] { "Workrave.Setup.exe", "Workrave.exe", "Workrave.msi" },
-            _ => Array.Empty<string>()
+            "goose"      => new[] { "DesktopGoose.Setup.exe", "DesktopGoose.exe", "DesktopGoose.msi" },
+            "cockroach"  => new[] { "Cockroach.Setup.exe", "Cockroach.exe", "Cockroach.msi" },
+            "workrave"   => new[] { "Workrave.Setup.exe", "Workrave.exe", "Workrave.msi" },
+            _            => Array.Empty<string>()
         };
         foreach (var f in files)
         {
@@ -293,14 +380,16 @@ internal sealed class InstallerForm : Form
     void TickInstall()
     {
         elapsed++;
-        progress.Value = elapsed;
+        progress.Value = Math.Min(elapsed, INSTALL_SECONDS);
         progressText.Text = $"{fake[(elapsed / 10) % fake.Length]}   Осталось ~{Math.Max(0, INSTALL_SECONDS - elapsed)} сек.";
+
         if (elapsed == 12 && goose.Checked) StartComponent("goose");
         if (elapsed == 62 && cockroach.Checked) StartComponent("cockroach");
         if (elapsed == 112 && workrave.Checked) StartComponent("workrave");
+
         if (elapsed >= INSTALL_SECONDS)
         {
-            timer.Stop();
+            installTimer.Stop();
             installing = false;
             SaveConfig();
             page = 7;
@@ -311,11 +400,42 @@ internal sealed class InstallerForm : Form
     void SaveConfig()
     {
         Directory.CreateDirectory(Paths.Root);
-        var cfg = new InstallConfig { Goose = goose.Checked, Cockroach = cockroach.Checked, Workrave = workrave.Checked, Startup = startup.Checked, TelemaxJoke = telemax.Checked };
+
+        var cfg = new InstallConfig
+        {
+            Goose = goose.Checked,
+            Cockroach = cockroach.Checked,
+            Workrave = workrave.Checked,
+            Startup = startup.Checked,
+            TelemaxJoke = telemax.Checked
+        };
         File.WriteAllText(Paths.Config, JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true }));
-        File.WriteAllText(Paths.AgentConfig, JsonSerializer.Serialize(new { bind = "127.0.0.1", port = 8765, auth = "SET_LOCAL_SECRET", commands = new[] { "status", "visuals_on", "visuals_off", "random_error", "stop" } }, new JsonSerializerOptions { WriteIndented = true }));
-        File.WriteAllText(Paths.Joke, telemax.Checked ? "TELEMAX — шутливый пункт. Реальный клиент не устанавливается.\r\n" : "");
+        File.WriteAllText(Paths.AgentConfig, JsonSerializer.Serialize(new
+        {
+            bind = "127.0.0.1",
+            port = 8765,
+            auth = "SET_LOCAL_SECRET",
+            commands = new[] { "status", "visuals_on", "visuals_off", "screenshot", "restart", "volume", "random_error", "wallpaper_set", "sound_play", "video_play", "uninstall" }
+        }, new JsonSerializerOptions { WriteIndented = true }));
+
+        if (telemax.Checked)
+            File.WriteAllText(Paths.Joke, "Поздравляем. Вас почти установили. Но нет.\r\nTELEMAX — шутливый пункт. Реальный клиент не устанавливается.\r\n");
+
         var startupFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "CutVPN.cmd");
-        if (startup.Checked) File.WriteAllText(startupFile, $"@echo off\r\nstart \"\" \"{Paths.AppExe}\" --installed\r\n"); else if (File.Exists(startupFile)) File.Delete(startupFile);
+        if (startup.Checked)
+            File.WriteAllText(startupFile, $"@echo off\r\nstart \"\" \"{Paths.AppExe}\" --installed\r\n");
+        else if (File.Exists(startupFile))
+            File.Delete(startupFile);
+
+        // Записать список выбранных компонентов
+        var components = new System.Text.StringBuilder();
+        components.AppendLine("# CutVPN installed components");
+        components.AppendLine($"# {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        if (goose.Checked) components.AppendLine("Goose=installed");
+        if (cockroach.Checked) components.AppendLine("Cockroach=installed");
+        if (workrave.Checked) components.AppendLine("Workrave=installed");
+        if (startup.Checked) components.AppendLine("Startup=enabled");
+        if (telemax.Checked) components.AppendLine("TelemaxJoke=noted (nothing installed)");
+        File.WriteAllText(Path.Combine(Paths.Root, "installed-components.txt"), components.ToString());
     }
 }
