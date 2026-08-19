@@ -20,26 +20,20 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Publish CutVPN
+      - name: Publish CutVPN UI
         run: dotnet publish ui/CutVPN.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
 
-      - name: Install Inno Setup
-        shell: powershell
-        run: choco install innosetup --yes --no-progress
+      - name: Publish CutVPN full-screen setup
+        run: dotnet publish installer/CutVPN.Setup.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
 
-      - name: Build CutVPN installer
-        shell: powershell
-        run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\CutVPN.iss"
-
-      - name: Upload CutVPN EXE
+      - name: Upload CutVPN UI
         uses: actions/upload-artifact@v4
         with:
           name: CutVPN-win-x64
           path: ui/bin/Release/net8.0-windows/win-x64/publish/
 
-      - name: Upload CutVPN installer
+      - name: Upload full-screen CutVPN Setup
         uses: actions/upload-artifact@v4
         with:
           name: CutVPN-Setup
-          path: installer/out/CutVPN-Setup.exe
+          path: installer/bin/Release/net8.0-windows/win-x64/publish/
