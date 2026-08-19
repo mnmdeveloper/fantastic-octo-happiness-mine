@@ -221,7 +221,7 @@ public sealed class MainForm : Form
     {
         private readonly Label body;
         private readonly ProgressBar bar;
-        private readonly Timer timer;
+        private readonly System.Windows.Forms.Timer timer;
         private int step;
         private readonly string[] pages;
 
@@ -259,7 +259,7 @@ public sealed class MainForm : Form
             };
             Controls.Add(safe);
 
-            timer = new Timer { Interval = 4200 };
+            timer = new System.Windows.Forms.Timer { Interval = 4200 };
             timer.Tick += (_, _) =>
             {
                 if (Random.Shared.NextDouble() < 0.45)
