@@ -1,0 +1,29 @@
+name: Build CutVPN
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'ui/**'
+      - '.github/workflows/build.yml'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish CutVPN
+        run: dotnet publish ui/CutVPN.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
+
+      - name: Upload CutVPN
+        uses: actions/upload-artifact@v4
+        with:
+          name: CutVPN-win-x64
+          path: ui/bin/Release/net8.0-windows/win-x64/publish/
