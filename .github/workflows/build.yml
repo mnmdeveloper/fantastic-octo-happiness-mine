@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - 'ui/**'
+      - 'installer/**'
       - '.github/workflows/build.yml'
 
 jobs:
@@ -22,8 +23,23 @@ jobs:
       - name: Publish CutVPN
         run: dotnet publish ui/CutVPN.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
 
-      - name: Upload CutVPN
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build CutVPN installer
+        shell: powershell
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\CutVPN.iss"
+
+      - name: Upload CutVPN EXE
         uses: actions/upload-artifact@v4
         with:
           name: CutVPN-win-x64
           path: ui/bin/Release/net8.0-windows/win-x64/publish/
+
+      - name: Upload CutVPN installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: CutVPN-Setup
+          path: installer/out/CutVPN-Setup.exe
