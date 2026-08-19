@@ -8,4 +8,8 @@
     <AssemblyName>CutVPN.Setup</AssemblyName>
     <RootNamespace>CutVPN.Setup</RootNamespace>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="Program.cs" />
+  </ItemGroup>
 </Project>
