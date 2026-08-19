@@ -1,12 +1,18 @@
-# Fantastic Octo Happiness Mine
+# CutVPN
 
-A Windows desktop companion controlled through Telegram.
+CutVPN is a personal Windows desktop utility controlled through Telegram.
 
 ## Scope
 
-This project is designed for use on a computer you own or administer. It provides explicit remote-management features such as screenshots, restart, volume control, wallpaper/media playback, and desktop effects.
+- Windows agent with explicit installation and visible status
+- Telegram bot running on a separate machine
+- Screenshot capture
+- Safe system actions such as restart
+- Volume control
+- Wallpaper/media library
+- Optional desktop effects and break reminders
 
-It does **not** implement stealthy malware behavior, hidden installation, credential theft, persistence designed to evade detection, or a fake/cracked software installer intended to trick another user.
+The installer identifies itself as **CutVPN** and does not impersonate unrelated or cracked software.
 
 ## Planned architecture
 
@@ -35,4 +41,4 @@ Windows Agent (controlled PC)
 
 ## Security
 
-The agent should authenticate Telegram requests by an allow-list of Telegram user IDs and keep its bot token outside source control.
+The agent should authenticate Telegram requests by an allow-list of Telegram user IDs and keep its bot token outside source control. Installation and runtime status remain visible to the local user.
