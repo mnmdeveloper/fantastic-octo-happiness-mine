@@ -1,12 +1,11 @@
 # CutVPN component payload
 
-Place the three official component installers in this folder before building the setup EXE.
+Place the official installers you have downloaded into this directory using one of these names:
 
-Expected filenames:
-- `Goose.exe`
-- `CockroachOnDesktop.exe`
-- `Workrave.exe`
+- `DesktopGoose.Setup.exe` / `DesktopGoose.exe` / `DesktopGoose.msi`
+- `Cockroach.Setup.exe` / `Cockroach.exe` / `Cockroach.msi`
+- `Workrave.Setup.exe` / `Workrave.exe` / `Workrave.msi`
 
-The setup wizard treats these as visible, user-selected components. It does not hide them or masquerade them as Windows components.
+The CutVPN Setup wizard starts the selected installers explicitly at visible points during the installation. If a payload is missing, that component is skipped and the wizard continues.
 
-After copying the selected payloads into `%LOCALAPPDATA%\CutVPN\payload`, a later CutVPN component step can launch each installer visibly.
+Do not put unknown or modified binaries here; use the official release files you trust.
