@@ -11,5 +11,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Program.Good.cs" />
+    <Compile Include="InstallerTimer.cs" />
   </ItemGroup>
 </Project>
