@@ -5,11 +5,11 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AssemblyName>CutVPN.Setup</AssemblyName>
     <RootNamespace>CutVPN.Setup</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Remove="Program.cs" />
-    <Compile Remove="Program.Fixed.cs" />
+    <Compile Include="Program.Final.cs" />
   </ItemGroup>
 </Project>
