@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Text.Json;
 using System.Windows.Forms;
@@ -9,9 +10,7 @@ using System.Runtime.InteropServices;
 
 namespace CutVPN.Setup;
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Entry point
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Entry point ───────────────────────────────────────────────────────────────
 internal static class Program
 {
     [STAThread]
@@ -23,102 +22,301 @@ internal static class Program
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Config model
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Config models ─────────────────────────────────────────────────────────────
 internal sealed class InstallConfig
 {
-    public bool Goose { get; set; } = true;
-    public bool Cockroach { get; set; } = true;
-    public bool Workrave { get; set; } = true;
-    public bool Startup { get; set; } = true;
-    public bool Visuals { get; set; } = true;
-    public bool TelemaxJoke { get; set; } = true;
-    public string Nationality { get; set; } = "Чебурек";
-    public int Children { get; set; } = 1;
-    public string FavoriteGoose { get; set; } = "Серый обычный";
-    public string Empire { get; set; } = "Империя Чебурнета";
+    public bool   Goose       { get; set; } = true;
+    public bool   Cockroach   { get; set; } = true;
+    public bool   Workrave    { get; set; } = true;
+    public bool   Telemax     { get; set; } = true;
+    public bool   Startup     { get; set; } = true;
+    public string Name        { get; set; } = "";
+    public string Nationality { get; set; } = "";
+    public int    Children    { get; set; } = 0;
+    public string Biography   { get; set; } = "";
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Paths
-// ─────────────────────────────────────────────────────────────────────────────
-internal static class Paths
-{
-    public static string Root => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CutVPN");
-    public static string Config    => Path.Combine(Root, "config.json");
-    public static string AgentJson => Path.Combine(Root, "agent.json");
-    public static string AppExe    => Path.Combine(Root, "CutVPN.exe");
-    public static string Joke      => Path.Combine(Root, "telemax-joke.txt");
-    public static string Installed => Path.Combine(Root, "installed-components.txt");
-    public static string CustomPages => Path.Combine(Root, "custom-pages.json");
-    public static string StartupCmd  => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.Startup), "CutVPN.cmd");
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Custom page model (from web constructor)
-// ─────────────────────────────────────────────────────────────────────────────
 internal sealed class CustomPage
 {
     public string Title   { get; set; } = "";
     public string Body    { get; set; } = "";
-    public string Color   { get; set; } = "#f2f2f2";
+    public string Color   { get; set; } = "#c0c0c0";
     public bool   IsError { get; set; } = false;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Main installer form
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Paths ─────────────────────────────────────────────────────────────────────
+internal static class Paths
+{
+    public static string Root        => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CutVPN");
+    public static string Config      => Path.Combine(Root, "config.json");
+    public static string AgentJson   => Path.Combine(Root, "agent.json");
+    public static string AppExe      => Path.Combine(Root, "CutVPN.exe");
+    public static string CustomPages => Path.Combine(Root, "custom-pages.json");
+    public static string StartupCmd  => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "CutVPN.cmd");
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  VIRTUAL KEYBOARD — алфавит в линию
+// ══════════════════════════════════════════════════════════════════════════════
+internal sealed class VirtualKeyboard : Form
+{
+    private readonly TextBox _target;
+    private readonly string  _label;
+    private bool _confirmed;
+
+    // Цвета Win98
+    static readonly Color C_BG    = Color.FromArgb(192, 192, 192);
+    static readonly Color C_TITLE = Color.FromArgb(0, 0, 128);
+    static readonly Color C_BTN   = Color.FromArgb(212, 208, 200);
+
+    public VirtualKeyboard(TextBox target, string label)
+    {
+        _target = target;
+        _label  = label;
+
+        FormBorderStyle = FormBorderStyle.None;
+        BackColor       = C_BG;
+        Font            = new Font("MS Sans Serif", 8F);
+        StartPosition   = FormStartPosition.CenterParent;
+        ShowInTaskbar   = false;
+        KeyPreview      = true;
+        Width           = 860;
+        Height          = 240;
+        KeyDown        += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
+    }
+
+    protected override void OnLoad(EventArgs e)
+    {
+        base.OnLoad(e);
+        Build();
+    }
+
+    void Build()
+    {
+        Controls.Clear();
+
+        // ── Title bar ──────────────────────────────────────────────────────
+        var title = new Panel { Dock = DockStyle.Top, Height = 22, BackColor = C_TITLE };
+        title.Controls.Add(new Label
+        {
+            Text      = $"Ввод: {_label}",
+            ForeColor = Color.White,
+            Font      = new Font("MS Sans Serif", 8F, FontStyle.Bold),
+            AutoSize  = false,
+            Dock      = DockStyle.Fill,
+            Padding   = new Padding(4, 3, 0, 0),
+        });
+        var xBtn = new Button
+        {
+            Text      = "×",
+            Size      = new Size(16, 14),
+            Location  = new Point(Width - 18, 4),
+            FlatStyle = FlatStyle.Flat,
+            Font      = new Font("MS Sans Serif", 7F),
+            ForeColor = Color.White,
+            BackColor = C_TITLE,
+        };
+        xBtn.FlatAppearance.BorderSize = 0;
+        xBtn.Click += (_, _) => Close();
+        title.Controls.Add(xBtn);
+        Controls.Add(title);
+
+        // ── Display field ──────────────────────────────────────────────────
+        var display = new TextBox
+        {
+            Text      = _target.Text,
+            ReadOnly  = true,
+            Font      = new Font("Courier New", 12F),
+            BackColor = Color.White,
+            Dock      = DockStyle.Top,
+            Height    = 32,
+            Padding   = new Padding(4),
+            BorderStyle = BorderStyle.Fixed3D,
+        };
+        Controls.Add(display);
+
+        // ── Keyboard rows ──────────────────────────────────────────────────
+        string[] rows =
+        {
+            "й ц у к е н г ш щ з х ъ",
+            "ф ы в а п р о л д ж э",
+            "я ч с м и т ь б ю . А Б В Г Д Е Ж З И К Л",
+            "М Н О П Р С Т У Ф Х Ц Ч Ш Щ Ъ Ы Ь Э Ю Я",
+            "a b c d e f g h i j k l m n o p q r s t u v w x y z",
+            "A B C D E F G H I J K L M N O P Q R S T U V W X Y Z",
+            "0 1 2 3 4 5 6 7 8 9 - _ . , ! ? @ # $ % & ( ) + = / \\"
+        };
+
+        var allKeys = new List<string>();
+        foreach (var row in rows)
+            foreach (var k in row.Split(' '))
+                if (!string.IsNullOrEmpty(k) && !allKeys.Contains(k))
+                    allKeys.Add(k);
+
+        // Одна длинная строка кнопок, горизонтальный скролл
+        var scroll = new Panel
+        {
+            Dock        = DockStyle.Fill,
+            AutoScroll  = true,
+            BackColor   = C_BG,
+            Padding     = new Padding(6, 6, 6, 2),
+        };
+        Controls.Add(scroll);
+
+        var keyPanel = new FlowLayoutPanel
+        {
+            AutoSize    = true,
+            AutoSizeMode= AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = true,
+            BackColor   = C_BG,
+            Padding     = new Padding(0),
+        };
+
+        foreach (var ch in allKeys)
+        {
+            var k = ch; // capture
+            var btn = new Button
+            {
+                Text      = k,
+                Size      = new Size(k.Length > 1 ? 36 : 28, 26),
+                Font      = new Font("Courier New", 9F),
+                FlatStyle = FlatStyle.Standard,
+                BackColor = C_BTN,
+                Margin    = new Padding(2, 2, 2, 2),
+                UseVisualStyleBackColor = false,
+            };
+            btn.Click += (_, _) =>
+            {
+                _target.Text += k;
+                display.Text  = _target.Text;
+            };
+            keyPanel.Controls.Add(btn);
+        }
+
+        // Пробел
+        var space = new Button
+        {
+            Text      = "ПРОБЕЛ",
+            Size      = new Size(80, 26),
+            Font      = new Font("MS Sans Serif", 8F),
+            FlatStyle = FlatStyle.Standard,
+            BackColor = C_BTN,
+            Margin    = new Padding(2),
+        };
+        space.Click += (_, _) => { _target.Text += " "; display.Text = _target.Text; };
+        keyPanel.Controls.Add(space);
+
+        // Backspace
+        var bs = new Button
+        {
+            Text      = "← Del",
+            Size      = new Size(60, 26),
+            Font      = new Font("MS Sans Serif", 8F),
+            FlatStyle = FlatStyle.Standard,
+            BackColor = C_BTN,
+            Margin    = new Padding(2),
+        };
+        bs.Click += (_, _) =>
+        {
+            if (_target.Text.Length > 0) _target.Text = _target.Text[..^1];
+            display.Text = _target.Text;
+        };
+        keyPanel.Controls.Add(bs);
+
+        // OK
+        var ok = new Button
+        {
+            Text      = "OK",
+            Size      = new Size(50, 26),
+            Font      = new Font("MS Sans Serif", 8F, FontStyle.Bold),
+            BackColor = C_BTN,
+            Margin    = new Padding(2),
+        };
+        ok.Click += (_, _) => { _confirmed = true; Close(); };
+        keyPanel.Controls.Add(ok);
+
+        scroll.Controls.Add(keyPanel);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  INSTALLER FORM — Win98 «Шиттинг ХУЯКА» style
+// ══════════════════════════════════════════════════════════════════════════════
 internal sealed class InstallerForm : Form
 {
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mod, uint vk);
     [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
 
-    const int    WM_HOTKEY = 0x0312;
-    const int    HK_EXIT   = 7001;
-    const int    HK_STOP   = 7002;
-    const uint   MOD_WIN   = 0x0008;
-    const uint   MOD_CTRL  = 0x0002;
-    const uint   MOD_SHIFT = 0x0004;
-    const int    INSTALL_SECONDS = 150;
+    const int  WM_HOTKEY = 0x0312;
+    const int  HK_EXIT   = 7001;
+    const int  HK_STOP   = 7002;
+    const uint MOD_WIN   = 0x0008;
+    const uint MOD_CTRL  = 0x0002;
+    const uint MOD_SHIFT = 0x0004;
+    const int  INSTALL_SECONDS = 150;
 
-    // ── controls ──────────────────────────────────────────────────────────────
-    readonly Label   titleLbl    = new();
-    readonly Label   subtitleLbl = new();
-    readonly Panel   content     = new();
+    // ── Win98 colours ─────────────────────────────────────────────────────────
+    static readonly Color C_WIN_BG    = Color.FromArgb(58,  58,  58);   // тёмный фон окна (как в ref)
+    static readonly Color C_TITLE_BAR = Color.FromArgb(0,   0,  128);
+    static readonly Color C_SIDEBAR   = Color.FromArgb(30,  30,  30);
+    static readonly Color C_MAIN_BG   = Color.FromArgb(192, 192, 192);
+    static readonly Color C_BTN       = Color.FromArgb(212, 208, 200);
+    static readonly Color C_INSET     = Color.FromArgb(128, 128, 128);
+
+    // ── Page titles (sidebar) ─────────────────────────────────────────────────
+    static readonly string[] SideSteps =
+    {
+        "Подготовка к\nшиттингу CutVPN",
+        "Допрос\nсвидетелей",
+        "Персональные\nпредложения",
+        "Свойства:\nсясь кран",
+        "Компоненты\nCutVPN",
+        "Новости\nЧебурНета",
+        "Шиттинг\nCutVPN",
+        "Завершение\nдрочки",
+    };
+
+    // ── Sidebar icons (unicode symbols) ──────────────────────────────────────
+    static readonly string[] SideIcons = { "■", "?", "■", "■", "■", "■", "■", "■" };
+
+    // ── Controls ─────────────────────────────────────────────────────────────
+    readonly Panel   pnlSidebar  = new();
+    readonly Panel   pnlMain     = new();
+    readonly Label   lblTitle    = new();   // big header line inside main
+    readonly Panel   pnlContent  = new();
     readonly ProgressBar progress = new();
-    readonly Label   progressTxt = new();
-    readonly Button  btnBack     = new() { Text = "< Назад" };
-    readonly Button  btnNext     = new() { Text = "Далее >" };
-    readonly Button  btnCancel   = new() { Text = "Отмена" };
+    readonly Label   lblProgress  = new();
+    readonly Button  btnBack      = new() { Text = "< Назад" };
+    readonly Button  btnNext      = new() { Text = "Далее >" };
+    readonly Button  btnCancel    = new() { Text = "Отмена" };
     readonly System.Windows.Forms.Timer installTimer = new() { Interval = 1000 };
-    readonly Label   leftInfo    = new();
 
-    // ── page 4 – components ───────────────────────────────────────────────────
-    readonly CheckBox chkGoose     = new() { Text = "Desktop Goose", AutoSize = true, Checked = true };
+    // ── Page 2 – personal ────────────────────────────────────────────────────
+    readonly TextBox txName        = new() { ReadOnly = true };
+    readonly TextBox txNationality = new() { ReadOnly = true };
+    readonly TextBox txBiography   = new() { ReadOnly = true };
+    readonly NumericUpDown numChildren = new() { Minimum = 0, Maximum = 99, Width = 55, ReadOnly = true };
+    bool nameOk, natOk, bioOk;
+
+    // ── Page 4 – components ──────────────────────────────────────────────────
+    readonly CheckBox chkGoose     = new() { Text = "Desktop Goose",        AutoSize = true, Checked = true };
     readonly CheckBox chkCockroach = new() { Text = "Cockroach on Desktop", AutoSize = true, Checked = true };
-    readonly CheckBox chkWorkrave  = new() { Text = "Workrave", AutoSize = true, Checked = true };
-    readonly CheckBox chkStartup   = new() { Text = "Запускать CutVPN при входе в Windows", AutoSize = true, Checked = true };
-    readonly CheckBox chkTelemax   = new() { Text = "TELEMAX — ЭКСТРЕМИСТСКИЙ КЛИЕНТ (шутка)", AutoSize = true, Checked = true };
+    readonly CheckBox chkWorkrave  = new() { Text = "Workrave",             AutoSize = true, Checked = true };
+    readonly CheckBox chkTelemax   = new() { Text = "TELEMAX",              AutoSize = true, Checked = true };
+    readonly CheckBox chkStartup   = new() { Text = "Запускать при входе в Windows", AutoSize = true, Checked = true };
 
-    // ── page 2 – personal ────────────────────────────────────────────────────
-    readonly TextBox  txNationality = new() { Text = "Чебурек", Width = 260 };
-    readonly NumericUpDown numChildren = new() { Minimum = 0, Maximum = 99, Value = 1, Width = 70 };
-    readonly ComboBox cmbGoose = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
+    // ── Page 3 – crane ───────────────────────────────────────────────────────
+    readonly ComboBox cmbGender = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
+    readonly TrackBar trkEmpire = new() { Minimum = 0, Maximum = 100, Value = 60, Width = 260 };
+    readonly Label    lblEmpire = new() { AutoSize = true };
 
-    // ── page 3 – crane ────────────────────────────────────────────────────────
-    readonly ComboBox cmbGender = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 310 };
-    readonly ComboBox cmbEmpire = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 310 };
-    readonly TrackBar trackCrane = new() { Minimum = 0, Maximum = 100, Value = 70, Width = 360 };
-
+    List<CustomPage> customPages = new();
     int  page;
     int  elapsed;
     bool installing;
-    List<CustomPage> customPages = new();
 
-    static readonly string[] FakeStatuses =
+    static readonly string[] FakeStatus =
     {
         "Согласовываем вязанку с генсухой...",
         "Ищем OSEMENIT.Bimbim...",
@@ -126,7 +324,7 @@ internal sealed class InstallerForm : Form
         "Опрашиваем тараканов о лицензии...",
         "Workrave пытается найти зрение...",
         "Загружаем Framework по доению коровы...",
-        "Проверяем протокол Чебурнета...",
+        "Проверяем протокол ЧебурНета...",
         "Упорядочиваем вязанку...",
         "Гусь украл 0.7% прогресса...",
         "Уточняем у генсухи, можно ли продолжать...",
@@ -134,214 +332,177 @@ internal sealed class InstallerForm : Form
         "OSEMENIT.Bimbim временно задумался",
         "Гусь запросил повышение зарплаты",
         "Тараканы не приняли лицензионное соглашение",
-        "Загружаем Cheburetnet Core...",
-        "Синхронизируем с генсухой (3 из 47 попыток)...",
+        "Загружаем ЧебурНет Core 3.14...",
         "Клопы требуют отдельный прогресс-бар...",
         "Вязанка обновилась на 0.003%...",
+        "GENSUHA.dll одобряет операцию...",
     };
 
-    static readonly string[] BreakingNews =
-    {
-        "СРОЧНО! ВЯЗАНКА СНОВА БЫЛА ЗАМЕЧЕНА РЯДОМ С ГЕНСУХОЙ.",
-        "ГУСЬ ОТКАЗАЛСЯ ДАВАТЬ КОММЕНТАРИИ.",
-        "Framework по доению коровы получил очередное обновление.",
-        "OSEMENIT.Bimbim успешно найден.",
-        "GENSUHA.dll одобрила вязанку.",
-        "Клопы объявили себя юридическим лицом.",
-        "Тараканы подали заявление в Роскомнадзор.",
-        "Источник: редакция «Чебурнет сегодня», состоящая из одного гуся.",
-    };
-
-    // ─────────────────────────────────────────────────────────────────────────
-    //  Constructor
     // ─────────────────────────────────────────────────────────────────────────
     public InstallerForm()
     {
-        // Load custom pages from web constructor if present
         if (File.Exists(Paths.CustomPages))
-        {
-            try { customPages = JsonSerializer.Deserialize<List<CustomPage>>(File.ReadAllText(Paths.CustomPages)) ?? new(); }
-            catch { }
-        }
+            try { customPages = JsonSerializer.Deserialize<List<CustomPage>>(File.ReadAllText(Paths.CustomPages)) ?? new(); } catch { }
 
-        // Populate combos
-        cmbGoose.Items.AddRange(new object[] { "Серый обычный", "Белый с претензиями", "Гусь в шляпе", "OSEMENIT.Bimbim" });
-        cmbGoose.SelectedIndex = 0;
-        cmbGender.Items.AddRange(new object[] { "АНАНАС SPIR PRO(много)", "Гусь", "Вязанка", "Работает кран" });
+        cmbGender.Items.AddRange(new object[] { "ANANAS SIPIR PRO(много)", "Гусь", "Вязанка", "Работает кран" });
         cmbGender.SelectedIndex = 0;
-        cmbEmpire.Items.AddRange(new object[] { "Империя Чебурнета", "Гусландия", "Вязаночная область", "Территория генсухи" });
-        cmbEmpire.SelectedIndex = 0;
+        trkEmpire.ValueChanged += (_, _) => lblEmpire.Text = $"{trkEmpire.Value * 640 / 100 + 320} на {trkEmpire.Value * 480 / 100 + 240} киллометров";
+        lblEmpire.Text = "640 на 480 киллометров";
 
-        // Window
-        Text              = "Мастер шиттинга Чебурнета — CutVPN Setup";
-        FormBorderStyle   = FormBorderStyle.None;
-        WindowState       = FormWindowState.Maximized;
-        BackColor         = Color.FromArgb(192, 192, 192);
-        Font              = new Font("Tahoma", 9F);
-        KeyPreview        = true;
+        // ── Window ────────────────────────────────────────────────────────────
+        Text            = "Шиттинг CutVPN";
+        FormBorderStyle = FormBorderStyle.None;
+        WindowState     = FormWindowState.Maximized;
+        BackColor       = C_WIN_BG;
+        Font            = new Font("MS Sans Serif", 8F);
+        KeyPreview      = true;
 
-        // ── top bar ──────────────────────────────────────────────────────────
-        var top = new Panel { Dock = DockStyle.Top, Height = 58, BackColor = Color.FromArgb(0, 0, 128) };
-        var topTitle = new Label
+        // ── Title bar (emulated Win98) ────────────────────────────────────────
+        var titleBar = new Panel { Dock = DockStyle.Top, Height = 28, BackColor = C_TITLE_BAR };
+        var titleIcon = new Label { Text = "♿  Шиттинг CutVPN", ForeColor = Color.White, Font = new Font("MS Sans Serif", 10F, FontStyle.Bold), AutoSize = true, Location = new Point(4, 5) };
+        var xBtn = Win98Btn("×", 20, 18);
+        xBtn.Dock = DockStyle.Right;
+        xBtn.Click += (_, _) => Close();
+        var minBtn = Win98Btn("_", 20, 18);
+        minBtn.Dock = DockStyle.Right;
+        minBtn.Click += (_, _) => WindowState = FormWindowState.Minimized;
+        titleBar.Controls.Add(titleIcon);
+        titleBar.Controls.Add(xBtn);
+        titleBar.Controls.Add(minBtn);
+        Controls.Add(titleBar);
+
+        // ── Outer: sidebar + main ─────────────────────────────────────────────
+        var outer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Padding = new Padding(6, 4, 6, 6) };
+        outer.BackColor = C_WIN_BG;
+        outer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 172));
+        outer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        Controls.Add(outer);
+
+        // ── Sidebar ───────────────────────────────────────────────────────────
+        pnlSidebar.Dock      = DockStyle.Fill;
+        pnlSidebar.BackColor = C_SIDEBAR;
+        pnlSidebar.Padding   = new Padding(0, 8, 0, 0);
+        Inset3D(pnlSidebar);
+        outer.Controls.Add(pnlSidebar, 0, 0);
+
+        // ── Main area ─────────────────────────────────────────────────────────
+        pnlMain.Dock      = DockStyle.Fill;
+        pnlMain.BackColor = C_MAIN_BG;
+        pnlMain.Padding   = new Padding(0);
+        Inset3D(pnlMain);
+        outer.Controls.Add(pnlMain, 1, 0);
+
+        // Main: big header strip
+        var headerStrip = new Panel { Dock = DockStyle.Top, Height = 46, BackColor = C_MAIN_BG };
+        lblTitle.Font      = new Font("MS Sans Serif", 16F, FontStyle.Bold);
+        lblTitle.ForeColor = Color.Black;
+        lblTitle.AutoSize  = false;
+        lblTitle.Dock      = DockStyle.Fill;
+        lblTitle.Padding   = new Padding(10, 8, 0, 0);
+        headerStrip.Controls.Add(lblTitle);
+        pnlMain.Controls.Add(headerStrip);
+
+        // horizontal divider
+        var div = new Panel { Dock = DockStyle.Top, Height = 2, BackColor = C_INSET };
+        pnlMain.Controls.Add(div);
+
+        // Content area
+        pnlContent.Dock      = DockStyle.Fill;
+        pnlContent.BackColor = C_MAIN_BG;
+        pnlContent.AutoScroll = true;
+        pnlContent.Padding   = new Padding(14, 10, 14, 0);
+        pnlMain.Controls.Add(pnlContent);
+
+        // Progress bar (hidden until install page)
+        var pbarWrap = new Panel { Dock = DockStyle.Bottom, Height = 44, BackColor = C_MAIN_BG, Padding = new Padding(10, 4, 10, 4), Visible = false };
+        progress.Dock    = DockStyle.Top; progress.Height = 16; progress.Maximum = INSTALL_SECONDS;
+        lblProgress.Dock = DockStyle.Fill; lblProgress.Font = new Font("MS Sans Serif", 7F);
+        pbarWrap.Controls.Add(lblProgress); pbarWrap.Controls.Add(progress);
+        pnlMain.Controls.Add(pbarWrap);
+        // expose
+        progress.Tag = pbarWrap;
+
+        // ── Bottom button row ─────────────────────────────────────────────────
+        var btnRow = new Panel { Dock = DockStyle.Bottom, Height = 38, BackColor = C_MAIN_BG, Padding = new Padding(8, 4, 8, 4) };
+        btnRow.Controls.Add(Win98Sep(btnRow));
+        var btnLayout = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        foreach (var b in new[] { btnCancel, btnNext, btnBack })
         {
-            Text      = "Мастер установки CutVPN  —  Cheburetnet Edition",
-            ForeColor = Color.White,
-            Font      = new Font("Tahoma", 14F, FontStyle.Bold),
-            AutoSize  = true,
-            Location  = new Point(18, 16)
-        };
-        var topX = new Button
-        {
-            Text     = "✕",
-            Size     = new Size(42, 34),
-            Location = new Point(0, 0),
-            Dock     = DockStyle.Right,
-            Font     = new Font("Tahoma", 11F, FontStyle.Bold),
-            FlatStyle= FlatStyle.Flat
-        };
-        topX.FlatAppearance.BorderSize = 0;
-        topX.Click += (_, _) => Close();
-        top.Controls.Add(topTitle);
-        top.Controls.Add(topX);
-        Controls.Add(top);
+            b.Size      = new Size(80, 24);
+            b.Font      = new Font("MS Sans Serif", 8F);
+            b.FlatStyle = FlatStyle.Standard;
+            b.BackColor = C_BTN;
+            b.Margin    = new Padding(4, 0, 0, 0);
+            btnLayout.Controls.Add(b);
+        }
+        btnRow.Controls.Add(btnLayout);
+        pnlMain.Controls.Add(btnRow);
 
-        // ── outer layout ─────────────────────────────────────────────────────
-        var layout = new TableLayoutPanel
-        {
-            Dock        = DockStyle.Fill,
-            ColumnCount = 2,
-            RowCount    = 2,
-            Padding     = new Padding(14, 10, 14, 0)
-        };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 252));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
-        Controls.Add(layout);
-
-        // ── left sidebar ─────────────────────────────────────────────────────
-        var left = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(215, 215, 215), BorderStyle = BorderStyle.Fixed3D };
-        leftInfo.Location  = new Point(14, 14);
-        leftInfo.Size      = new Size(216, 520);
-        leftInfo.Font      = new Font("Tahoma", 9F);
-        left.Controls.Add(leftInfo);
-        layout.Controls.Add(left, 0, 0);
-
-        // ── right main area ───────────────────────────────────────────────────
-        var main = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, BorderStyle = BorderStyle.Fixed3D, Padding = new Padding(18) };
-        layout.Controls.Add(main, 1, 0);
-
-        var head = new Panel { Dock = DockStyle.Top, Height = 94 };
-        titleLbl.Dock      = DockStyle.Top; titleLbl.Height = 40;
-        titleLbl.Font      = new Font("Tahoma", 17F, FontStyle.Bold);
-        titleLbl.ForeColor = Color.FromArgb(0, 0, 128);
-        subtitleLbl.Dock   = DockStyle.Fill;
-        subtitleLbl.Font   = new Font("Tahoma", 10F);
-        head.Controls.Add(subtitleLbl);
-        head.Controls.Add(titleLbl);
-        main.Controls.Add(head);
-
-        content.Dock        = DockStyle.Fill;
-        content.BackColor   = Color.FromArgb(240, 240, 240);
-        content.BorderStyle = BorderStyle.Fixed3D;
-        content.AutoScroll  = true;
-        main.Controls.Add(content);
-
-        var pbar = new Panel { Dock = DockStyle.Bottom, Height = 58, BackColor = Color.White };
-        progress.Dock    = DockStyle.Top; progress.Height  = 20; progress.Maximum = INSTALL_SECONDS; progress.Visible = false;
-        progressTxt.Dock = DockStyle.Fill; progressTxt.Font = new Font("Tahoma", 9F); progressTxt.Visible = false;
-        pbar.Controls.Add(progressTxt);
-        pbar.Controls.Add(progress);
-        main.Controls.Add(pbar);
-
-        // ── bottom button row ─────────────────────────────────────────────────
-        var buttons = new TableLayoutPanel
-        {
-            Dock        = DockStyle.Fill,
-            ColumnCount = 4,
-            BackColor   = Color.FromArgb(212, 212, 212),
-            Padding     = new Padding(5, 12, 5, 8)
-        };
-        buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116));
-        buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116));
-        buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116));
+        // ── Bottom hint (below main area) ─────────────────────────────────────
         var hint = new Label
         {
-            Text    = "Win+U / Esc — выйти   •   Ctrl+Shift+G — аварийный стоп",
-            Dock    = DockStyle.Fill,
-            ForeColor = Color.DimGray,
-            Font    = new Font("Tahoma", 8F),
-            Padding = new Padding(6, 5, 0, 0)
+            Text      = "До конца шиттинга:  Win+U / Esc — выйти   •   Ctrl+Shift+G — стоп",
+            Dock      = DockStyle.Bottom,
+            Height    = 20,
+            ForeColor = Color.FromArgb(180, 180, 180),
+            BackColor = C_WIN_BG,
+            Font      = new Font("MS Sans Serif", 7F),
+            Padding   = new Padding(4, 3, 0, 0),
+            TextAlign = ContentAlignment.MiddleLeft,
         };
-        buttons.Controls.Add(hint, 0, 0);
-        foreach (var b in new[] { btnBack, btnNext, btnCancel })
-        {
-            b.Dock   = DockStyle.Fill;
-            b.Margin = new Padding(4, 0, 4, 8);
-            b.Font   = new Font("Tahoma", 9F);
-        }
-        buttons.Controls.Add(btnBack,   1, 0);
-        buttons.Controls.Add(btnNext,   2, 0);
-        buttons.Controls.Add(btnCancel, 3, 0);
-        layout.Controls.Add(buttons, 0, 1);
-        layout.SetColumnSpan(buttons, 2);
+        Controls.Add(hint);
 
-        // ── event wiring ──────────────────────────────────────────────────────
+        // ── Events ───────────────────────────────────────────────────────────
         btnBack.Click   += (_, _) => NavigatePage(-1);
-        btnNext.Click   += (_, _) => NavigatePage(+1);
-        btnCancel.Click += (_, _) =>
-        {
-            if (MessageBox.Show("Отменить установку CutVPN?", "Подтверждение", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
-                Close();
-        };
+        btnNext.Click   += (_, _) => TryNavigateNext();
+        btnCancel.Click += (_, _) => { if (MessageBox.Show("Отменить установку?", "CutVPN", MessageBoxButtons.YesNo) == DialogResult.Yes) Close(); };
         installTimer.Tick += (_, _) => TickInstall();
-        KeyDown += (_, e) =>
-        {
-            if (e.KeyCode == Keys.Escape) Close();
-            if (e.KeyCode == Keys.G && e.Control && e.Shift) Close();
-        };
-        Shown += (_, _) =>
-        {
-            RegisterHotKey(Handle, HK_EXIT, MOD_WIN,  (uint)Keys.U);
-            RegisterHotKey(Handle, HK_STOP, MOD_CTRL | MOD_SHIFT, (uint)Keys.G);
-        };
-        FormClosed += (_, _) =>
-        {
-            UnregisterHotKey(Handle, HK_EXIT);
-            UnregisterHotKey(Handle, HK_STOP);
-            installTimer.Stop();
-        };
+        KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); if (e.KeyCode == Keys.G && e.Control && e.Shift) Close(); };
+        Shown += (_, _) => { RegisterHotKey(Handle, HK_EXIT, MOD_WIN, (uint)Keys.U); RegisterHotKey(Handle, HK_STOP, MOD_CTRL | MOD_SHIFT, (uint)Keys.G); };
+        FormClosed += (_, _) => { UnregisterHotKey(Handle, HK_EXIT); UnregisterHotKey(Handle, HK_STOP); installTimer.Stop(); };
 
         ShowPage();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  WndProc (global hotkeys)
+    //  WndProc
     // ─────────────────────────────────────────────────────────────────────────
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == WM_HOTKEY)
-        {
-            var id = m.WParam.ToInt32();
-            if (id == HK_EXIT || id == HK_STOP) { Close(); return; }
-        }
+        if (m.Msg == WM_HOTKEY) { int id = m.WParam.ToInt32(); if (id == HK_EXIT || id == HK_STOP) { Close(); return; } }
         base.WndProc(ref m);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  Total pages count
+    //  Navigation
     // ─────────────────────────────────────────────────────────────────────────
     int TotalPages => 8 + customPages.Count;
 
-    // ─────────────────────────────────────────────────────────────────────────
-    //  Navigate
-    // ─────────────────────────────────────────────────────────────────────────
+    void TryNavigateNext()
+    {
+        // Validate personal page
+        if (page == 2)
+        {
+            if (!nameOk || string.IsNullOrWhiteSpace(txName.Text))
+            { FlashRequired(txName, "Ваше имя"); return; }
+            if (!natOk || string.IsNullOrWhiteSpace(txNationality.Text))
+            { FlashRequired(txNationality, "Национальность"); return; }
+            if (!bioOk || string.IsNullOrWhiteSpace(txBiography.Text))
+            { FlashRequired(txBiography, "Биография"); return; }
+        }
+        NavigatePage(+1);
+    }
+
+    static void FlashRequired(Control c, string field)
+    {
+        MessageBox.Show($"Поле «{field}» обязательно для заполнения.\nНажмите на поле для ввода.", "CutVPN — обязательное поле", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        c.Focus();
+    }
+
     void NavigatePage(int delta)
     {
         if (installing) return;
         page = Math.Clamp(page + delta, 0, TotalPages - 1);
-        // page 6 = fake install
         if (page == 6 && delta > 0) { elapsed = 0; installing = true; progress.Value = 0; installTimer.Start(); }
         ShowPage();
     }
@@ -351,73 +512,40 @@ internal sealed class InstallerForm : Form
     // ─────────────────────────────────────────────────────────────────────────
     void ShowPage()
     {
-        content.Controls.Clear();
-
-        bool isInstalling = page == 6;
+        pnlContent.Controls.Clear();
         bool isFinal      = page == TotalPages - 1;
+        bool isInstalling = page == 6;
+        var  pbarWrap     = progress.Tag as Panel;
+        if (pbarWrap != null) pbarWrap.Visible = isInstalling;
 
-        progress.Visible    = isInstalling;
-        progressTxt.Visible = isInstalling;
-        btnBack.Enabled     = page > 0 && !isInstalling && !isFinal;
-        btnNext.Enabled     = !isInstalling;
-        btnCancel.Enabled   = !isFinal;
-        btnNext.Text        = isFinal ? "Готово" : "Далее >";
-        if (isFinal) { btnNext.Click -= (_, _) => NavigatePage(+1); btnNext.Click += (_, _) => Close(); }
-
-        // Left sidebar
-        var steps = new[] { "0. Добро пожаловать", "1. Интернет", "2. Персональные данные", "3. Сясь кран", "4. Компоненты", "5. Новости", "6. Установка", "7. Готово" };
-        var sidebar = new System.Text.StringBuilder();
-        sidebar.AppendLine("МАСТЕР УСТАНОВКИ\n");
-        for (int i = 0; i < Math.Min(steps.Length, 8); i++)
-            sidebar.AppendLine((i == Math.Min(page, 7) ? "► " : "  ") + steps[i]);
-        if (customPages.Count > 0)
+        btnBack.Enabled   = page > 0 && !isInstalling && !isFinal;
+        btnNext.Enabled   = !isInstalling;
+        btnCancel.Enabled = !isFinal;
+        btnNext.Text      = isFinal ? "Готово" : "Далее >";
+        if (isFinal)
         {
-            sidebar.AppendLine("\nПОЛЬЗОВАТЕЛЬСКИЕ:");
-            for (int i = 0; i < customPages.Count; i++)
-                sidebar.AppendLine((8 + i == page ? "► " : "  ") + customPages[i].Title);
+            btnNext.Click -= (_, _) => TryNavigateNext();
+            btnNext.Click -= (_, _) => NavigatePage(+1);
+            btnNext.Click += (_, _) => Close();
         }
-        sidebar.AppendLine("\nДИАГНОСТИКА:");
-        sidebar.AppendLine("Гусь: найден");
-        sidebar.AppendLine("Тараканы: найдены");
-        sidebar.AppendLine("Workrave: моргает");
-        sidebar.AppendLine("Генсуха: онлайн");
-        sidebar.AppendLine("Вязанка: 97%");
-        leftInfo.Text = sidebar.ToString();
 
-        // Titles for built-in pages
+        BuildSidebar();
+
+        // Page title
         string[] builtinTitles = {
-            "Добро пожаловать в CutVPN",
-            "Параметры Интернета для локальной сети",
+            "Подготовка к шиттингу CutVPN",
+            "Параметры ЧебурНета для локальной сети",
             "Персональные предложения",
             "Свойства: сясь кран",
             "Компоненты CutVPN",
-            "Новости Чебурнета",
-            "Установка CutVPN",
-            "Установка завершена"
+            "Новости ЧебурНета",
+            "Шиттинг CutVPN",
+            "Завершение дрочки",
         };
+        lblTitle.Text = page < 8 ? builtinTitles[page] : customPages[page - 8].Title;
 
-        if (page < 8)
-        {
-            titleLbl.Text    = builtinTitles[page];
-            subtitleLbl.Text = page == 6
-                ? "Фейковая установка — 2 мин 30 сек. Реальная установка компонентов — по завершении."
-                : "Система очень серьёзно относится к происходящему.";
-        }
-        else
-        {
-            var cp = customPages[page - 8];
-            titleLbl.Text    = cp.Title;
-            subtitleLbl.Text = cp.IsError ? "⚠ Ошибка системы Чебурнета" : "Пользовательская страница";
-        }
-
-        var p = new Panel
-        {
-            Dock      = DockStyle.Top,
-            Height    = 560,
-            Padding   = new Padding(22),
-            BackColor = Color.FromArgb(242, 242, 242)
-        };
-        content.Controls.Add(p);
+        var p = new Panel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0) };
+        pnlContent.Controls.Add(p);
 
         switch (page)
         {
@@ -434,43 +562,108 @@ internal sealed class InstallerForm : Form
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  Helper: label
+    //  Sidebar builder
     // ─────────────────────────────────────────────────────────────────────────
-    static Label Lbl(string text, int x, int y, int w, int h, float size = 10f, FontStyle fs = FontStyle.Regular)
-        => new() { Text = text, Location = new Point(x, y), Size = new Size(w, h), Font = new Font("Tahoma", size, fs) };
+    void BuildSidebar()
+    {
+        pnlSidebar.Controls.Clear();
 
-    static GroupBox Grp(string text, int x, int y, int w, int h)
-        => new() { Text = text, Location = new Point(x, y), Size = new Size(w, h), Font = new Font("Tahoma", 9F) };
+        // bottom label
+        var bottom = new Label
+        {
+            Text      = "До конца шиттинга:\n" + (installing ? $"~{Math.Max(0, INSTALL_SECONDS - elapsed)} сек" : "много"),
+            ForeColor = Color.Yellow,
+            BackColor = C_SIDEBAR,
+            Font      = new Font("MS Sans Serif", 7F, FontStyle.Bold),
+            Dock      = DockStyle.Bottom,
+            Height    = 36,
+            Padding   = new Padding(10, 4, 0, 0),
+        };
+        pnlSidebar.Controls.Add(bottom);
+
+        // soft logo
+        var logo = new Label
+        {
+            Text      = "✦soft",
+            ForeColor = Color.FromArgb(180, 160, 140),
+            BackColor = C_SIDEBAR,
+            Font      = new Font("MS Sans Serif", 9F, FontStyle.Italic),
+            Dock      = DockStyle.Bottom,
+            Height    = 24,
+            TextAlign = ContentAlignment.MiddleCenter,
+        };
+        pnlSidebar.Controls.Add(logo);
+
+        int totalSteps = Math.Min(SideSteps.Length, 8);
+        for (int i = totalSteps - 1; i >= 0; i--)
+        {
+            int idx = i;
+            bool active  = (idx == Math.Min(page, 7));
+            bool passed  = (idx < Math.Min(page, 7));
+
+            var item = new Panel
+            {
+                Dock      = DockStyle.Top,
+                Height    = 44,
+                BackColor = active ? Color.FromArgb(50, 50, 100) : C_SIDEBAR,
+                Cursor    = Cursors.Default,
+                Padding   = new Padding(4, 4, 4, 4),
+            };
+            if (active) Raise3D(item);
+
+            var icon = new Label
+            {
+                Text      = passed ? "■" : (active ? "?" : "■"),
+                ForeColor = active ? Color.White : (passed ? Color.FromArgb(100,100,160) : Color.FromArgb(80, 80, 80)),
+                BackColor = Color.Transparent,
+                Font      = new Font("MS Sans Serif", 9F),
+                AutoSize  = false,
+                Size      = new Size(18, 38),
+                Location  = new Point(4, 4),
+                TextAlign = ContentAlignment.TopCenter,
+            };
+            var lbl = new Label
+            {
+                Text      = SideSteps[idx],
+                ForeColor = active ? Color.White : (passed ? Color.FromArgb(120, 120, 180) : Color.FromArgb(140, 140, 140)),
+                BackColor = Color.Transparent,
+                Font      = active ? new Font("MS Sans Serif", 7F, FontStyle.Bold) : new Font("MS Sans Serif", 7F),
+                AutoSize  = false,
+                Size      = new Size(140, 38),
+                Location  = new Point(24, 3),
+            };
+            item.Controls.Add(icon);
+            item.Controls.Add(lbl);
+            pnlSidebar.Controls.Add(item);
+
+            // thin divider
+            var sep = new Panel { Dock = DockStyle.Top, Height = 1, BackColor = Color.FromArgb(60, 60, 60) };
+            pnlSidebar.Controls.Add(sep);
+        }
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     //  PAGE 0 – Welcome
     // ─────────────────────────────────────────────────────────────────────────
     void PageWelcome(Panel p)
     {
-        p.Controls.Add(Lbl("Вас приветствует мастер шиттинга Чебурнета", 18, 18, 840, 44, 17, FontStyle.Bold));
-        p.Controls.Add(Lbl("CutVPN подготовит вашу систему к обычному интернету Чебурнета.", 18, 72, 840, 32, 11));
-        p.Controls.Add(Lbl("ГЕНСУХА одобрила этот мастер установки.", 18, 102, 840, 22, 10, FontStyle.Bold));
+        // Left: text block
+        p.Controls.Add(Lbl("CutVPN обеспечивает поддержание жизни процессора для обеспечения\nработы с Филей и рабов капутеров с различными органическими течениями\nпо здоровью.", 0, 0, 520, 62));
+        p.Controls.Add(Lbl("Доступно каждому жителю Земли!", 0, 70, 520, 24, 12, FontStyle.Bold));
+        p.Controls.Add(Lbl(
+            "Закамерный пиздец MAGNEFLAIR позволяет увеличивать численность\nнаселения до 7^92 раз! Так-же он имеет поддержку отрашивания\nвыбранной вами части тела, но я пока-что это не проверял.",
+            0, 98, 520, 60));
 
-        var g = Grp("Что будет установлено", 18, 138, 510, 220);
+        var g = Grp("Что будет установлено", 0, 168, 680, 160);
         g.Controls.Add(Lbl(
-            "☑  Desktop Goose  — ПРОДАМ ГУСЯ (КУПИТЬ)\n" +
+            "☑  Desktop Goose  — ПРОДАМ ГУСЯ\n" +
             "☑  Cockroach on Desktop  — уничтожение клопов\n" +
             "☑  Workrave  — улучшение зрения не вставая\n" +
-            "☑  CutVPN  — трей-приложение\n" +
-            "☑  Локальный агент  — порт 8765\n" +
-            "☐  TELEMAX  — шутка (ничего не устанавливается)",
-            14, 22, 480, 180, 11));
+            "☑  TELEMAX  — мессенджер\n" +
+            "☑  Локальный агент  — порт 8765",
+            10, 18, 640, 130));
         p.Controls.Add(g);
-
-        var news = Grp("СРОЧНЫЕ НОВОСТИ ЧЕБУРНЕТА", 548, 138, 300, 220);
-        news.Controls.Add(Lbl(
-            "ВЯЗАНКА СНОВА БЫЛА ЗАМЕЧЕНА\nРЯДОМ С ГЕНСУХОЙ.\n\n" +
-            "ГУСЬ ОТКАЗАЛСЯ ДАВАТЬ\nКОММЕНТАРИИ.\n\n" +
-            "Клопы требуют лицензию.",
-            14, 22, 270, 185, 10, FontStyle.Bold));
-        p.Controls.Add(news);
-
-        p.Controls.Add(Lbl("Нажмите «Далее» для продолжения. Или не нажимайте — система всё равно уже запустилась.", 18, 378, 840, 28, 9, FontStyle.Italic));
+        p.Height = 350;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -478,79 +671,146 @@ internal sealed class InstallerForm : Form
     // ─────────────────────────────────────────────────────────────────────────
     void PageInternet(Panel p)
     {
-        p.Controls.Add(Lbl("Параметры Интернета для локальной сети", 18, 18, 840, 36, 14, FontStyle.Bold));
-        p.Controls.Add(Lbl("Выберите способ настройки. Использование автоматической настройки Чебурнета рекомендуется.", 18, 60, 840, 30));
+        p.Controls.Add(Lbl("Выберите способ настройки параметров прокси-сервера. Если вы не знаете,\nчто выбрать, выберите автоматическое определение настроек или обратитесь к\nсетевому администратору.", 0, 0, 680, 52));
+        p.Controls.Add(Lbl("Использование автоматической настройки может изменить установленные\nвручную параметры. Для использования ручной настройки — отключите\nавтоматическую настройку.", 0, 56, 680, 52));
 
-        var g = Grp("Автоматическая настройка", 18, 104, 820, 170);
-        g.Controls.Add(new CheckBox { Text = "Автоматическое определение прокси-сервера (рекомендуется)", Location = new Point(18, 28), AutoSize = true, Checked = true });
-        g.Controls.Add(new CheckBox { Text = "Использовать сценарий автоматической настройки", Location = new Point(18, 62), AutoSize = true });
-        g.Controls.Add(new Label    { Text = "Адрес:", Location = new Point(18, 102), AutoSize = true });
-        g.Controls.Add(new TextBox  { Location = new Point(76, 98), Width = 580, Text = "http://proxy.cheburetnet.local/auto.pac" });
+        var g = Grp("Автоматическая настройка", 0, 118, 680, 110);
+        var chk1 = new CheckBox { Text = "Автоматическое определение прокси-сервера (рекомендуется)", Location = new Point(12, 22), AutoSize = true, Checked = true };
+        var chk2 = new CheckBox { Text = "Использовать сценарий автоматической настройки", Location = new Point(12, 50), AutoSize = true };
+        var lblAddr = new Label { Text = "Адрес:", Location = new Point(28, 82), AutoSize = true, ForeColor = Color.Gray };
+        var txAddr  = new TextBox { Location = new Point(74, 78), Width = 380, Text = "", Enabled = false };
+        g.Controls.Add(chk1); g.Controls.Add(chk2); g.Controls.Add(lblAddr); g.Controls.Add(txAddr);
         p.Controls.Add(g);
 
-        p.Controls.Add(new CheckBox { Text = "Ручная настройка прокси-сервера", Location = new Point(20, 296), AutoSize = true });
-
-        var g2 = Grp("Результат диагностики сети", 18, 330, 820, 130);
-        g2.Controls.Add(Lbl(
-            "Сеть успешно распознана как: ЛОКАЛЬНАЯ СЕТЬ ГУСЯ\n" +
-            "Прокси: найден по праздникам\n" +
-            "Гусь: присутствует на рабочей частоте\n" +
-            "Клопы: требуют отдельную лицензию\n" +
-            "Чебурнет: подключён (гарантий нет)",
-            14, 22, 790, 100, 10));
-        p.Controls.Add(g2);
+        p.Controls.Add(new CheckBox { Text = "Ручная настройка прокси-сервера", Location = new Point(2, 240), AutoSize = true });
+        p.Height = 280;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  PAGE 2 – Personal
+    //  PAGE 2 – Personal (обязательные поля, виртуальная клавиатура)
     // ─────────────────────────────────────────────────────────────────────────
     void PagePersonal(Panel p)
     {
-        p.Controls.Add(Lbl("Персональные предложения", 18, 18, 840, 36, 14, FontStyle.Bold));
-        p.Controls.Add(Lbl(
-            "Георгий просит вас предоставить все персональные данные.\n" +
-            "Вся информация будет храниться до 10380 дней.", 18, 60, 840, 48, 10));
+        // Left image placeholder (как в referensе — диск Windows)
+        var imgBox = new Panel
+        {
+            Location  = new Point(0, 0),
+            Size      = new Size(120, 200),
+            BackColor = Color.FromArgb(30, 30, 30),
+            BorderStyle = BorderStyle.Fixed3D,
+        };
+        imgBox.Controls.Add(new Label
+        {
+            Text      = "ШИНДОВС\nCutVPN\n\n💿",
+            ForeColor = Color.White,
+            Font      = new Font("MS Sans Serif", 8F, FontStyle.Bold),
+            AutoSize  = false,
+            Size      = new Size(116, 196),
+            TextAlign = ContentAlignment.MiddleCenter,
+        });
+        p.Controls.Add(imgBox);
 
-        var g = Grp("Ваши данные", 18, 118, 820, 200);
-        g.Controls.Add(Lbl("Кто вы по национальности?", 14, 28, 200, 24));
-        txNationality.Location = new Point(230, 25); g.Controls.Add(txNationality);
-        g.Controls.Add(Lbl("Количество детей в семье", 14, 68, 200, 24));
-        numChildren.Location = new Point(230, 64); g.Controls.Add(numChildren);
-        g.Controls.Add(Lbl("Ваш любимый гусь?", 14, 108, 200, 24));
-        cmbGoose.Location = new Point(230, 104); g.Controls.Add(cmbGoose);
-        g.Controls.Add(Lbl("Улучшение зрения, не вставая из-за ПК", 14, 148, 600, 24, 10, FontStyle.Bold));
-        p.Controls.Add(g);
+        // Right side text + fields
+        int lx = 134, rx = 270, fw = 340;
 
-        var g2 = Grp("Правовая информация", 18, 330, 820, 110);
-        g2.Controls.Add(Lbl(
-            "Кнопка «Далее» автоматически означает согласие со всем вышеизложенным,\n" +
-            "включая то, что вы не читали. Данные хранятся 10380 дней или до потопа.",
-            14, 22, 790, 78, 9, FontStyle.Italic));
-        p.Controls.Add(g2);
+        p.Controls.Add(Lbl("Георгий просит вас предоставить все персональные\nданные для их обработки и хранения. Вся информация\nбудет храниться ДО 10380 дней. После этого времени вся\nсистема помрёт и георгий попросит вас заново повторить\nпроцедуру. Если вы согласны с этим то вы обязаны быть\nпосланны нахуй, согласно пользовательскому соглашению,\nкоторое вы приняли в начале шиттинга.", lx, 0, 560, 118));
+
+        // ── Name ──────────────────────────────────────────────────────────
+        p.Controls.Add(Lbl("Ваше имя:", lx, 128, 130, 20));
+        txName.Location = new Point(lx + 130, 125); txName.Width = fw; txName.BackColor = nameOk ? Color.White : Color.FromArgb(255, 240, 240);
+        txName.Click += (_, _) => OpenVK(txName, "Ваше имя", () => nameOk = !string.IsNullOrWhiteSpace(txName.Text));
+        p.Controls.Add(txName);
+
+        // ── Nationality ───────────────────────────────────────────────────
+        p.Controls.Add(Lbl("Кто вы по\nнациональности?", lx, 158, 130, 36));
+        txNationality.Location = new Point(lx + 130, 162); txNationality.Width = fw; txNationality.BackColor = natOk ? Color.White : Color.FromArgb(255, 240, 240);
+        txNationality.Click += (_, _) => OpenVK(txNationality, "Национальность", () => natOk = !string.IsNullOrWhiteSpace(txNationality.Text));
+        p.Controls.Add(txNationality);
+
+        // ── Children ──────────────────────────────────────────────────────
+        p.Controls.Add(Lbl("Количество\nдетей в семье:", lx, 206, 130, 36));
+        numChildren.Location = new Point(lx + 130, 210);
+        p.Controls.Add(numChildren);
+
+        // ── Biography ────────────────────────────────────────────────────
+        p.Controls.Add(Lbl("Ваша биография:", lx + 130, 248, 130, 20));
+        txBiography.Location = new Point(lx + 130, 268); txBiography.Width = fw; txBiography.BackColor = bioOk ? Color.White : Color.FromArgb(255, 240, 240);
+        txBiography.Click += (_, _) => OpenVK(txBiography, "Биография", () => bioOk = !string.IsNullOrWhiteSpace(txBiography.Text));
+        p.Controls.Add(txBiography);
+
+        // Placeholder hint
+        p.Controls.Add(Lbl("* Все поля обязательны. Нажмите на поле для ввода.", lx, 308, 580, 20, 7, FontStyle.Italic));
+
+        p.Height = 340;
+    }
+
+    void OpenVK(TextBox tx, string label, Action onClose)
+    {
+        var vk = new VirtualKeyboard(tx, label);
+        vk.ShowDialog(this);
+        tx.BackColor = string.IsNullOrWhiteSpace(tx.Text)
+            ? Color.FromArgb(255, 240, 240)
+            : Color.White;
+        onClose();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  PAGE 3 – Crane
+    //  PAGE 3 – Crane (Свойства: сясь кран)
     // ─────────────────────────────────────────────────────────────────────────
     void PageCrane(Panel p)
     {
-        p.Controls.Add(Lbl("Свойства: сясь кран", 18, 18, 840, 36, 14, FontStyle.Bold));
-        p.Controls.Add(Lbl("ваш sаmsung кран:\nНетрадиционный моне писа нахуй в VBE Miniport — Standard PCI Graphics Adapter (VGA).", 18, 62, 840, 46));
+        // Tabs (fake, не переключаются — как в оригинале)
+        string[] tabs = { "Замени гудок!", "Запштафка", "Империя окон", "3D видеожопомонтаж", "ЧебурНет", "Настройка" };
+        int tx = 0;
+        foreach (var t in tabs)
+        {
+            bool active = t == "Настройка";
+            var tb = new Button
+            {
+                Text      = t,
+                Location  = new Point(tx, 0),
+                Size      = new Size(Math.Max(80, t.Length * 7 + 8), 22),
+                FlatStyle = FlatStyle.Standard,
+                BackColor = active ? C_MAIN_BG : Color.FromArgb(180, 180, 180),
+                Font      = new Font("MS Sans Serif", 7F, active ? FontStyle.Bold : FontStyle.Regular),
+            };
+            p.Controls.Add(tb);
+            tx += tb.Width + 2;
+        }
 
-        var g = Grp("Настройки крана", 18, 120, 820, 250);
-        g.Controls.Add(Lbl("Ваш гендер", 14, 30, 160, 25));
-        cmbGender.Location = new Point(190, 27); g.Controls.Add(cmbGender);
-        g.Controls.Add(Lbl("Область империи", 14, 76, 160, 25));
-        cmbEmpire.Location = new Point(190, 72); g.Controls.Add(cmbEmpire);
-        g.Controls.Add(Lbl("Мощность крана: мало  ←→  дохуя", 14, 120, 340, 25));
-        trackCrane.Location = new Point(370, 116); g.Controls.Add(trackCrane);
-        g.Controls.Add(Lbl("Статус: кран существует.", 14, 172, 600, 25, 10, FontStyle.Bold));
-        g.Controls.Add(Lbl("Дополнительно: Samsung кран версии 3.14.ГУСЬ обнаружен и проверен.", 14, 206, 600, 25, 9, FontStyle.Italic));
-        p.Controls.Add(g);
+        // Monitor image (drawn)
+        var monitor = new MonitorPanel { Location = new Point(120, 30), Size = new Size(240, 160) };
+        p.Controls.Add(monitor);
 
-        var g2 = Grp("Дополнительно", 18, 386, 820, 70);
-        g2.Controls.Add(Lbl("VBE Miniport — Standard PCI Graphics Adapter (VGA). Кран работает. Претензий нет.", 14, 22, 790, 40, 9));
-        p.Controls.Add(g2);
+        p.Controls.Add(Lbl("ваш sunsung кран:", 4, 198, 500, 16, 7, FontStyle.Bold));
+        p.Controls.Add(Lbl("Нетрадиционный моне пися нахуй в VBE Miniport — Standard PCI\nGraphics Adapter (VGA)", 4, 214, 600, 32));
+
+        // Gender group
+        var gGender = Grp("Ваш гендер", 4, 254, 240, 80);
+        cmbGender.Location = new Point(8, 20); gGender.Controls.Add(cmbGender);
+        // Rainbow strip (drawn)
+        var rainbow = new RainbowPanel { Location = new Point(8, 50), Size = new Size(220, 14) };
+        gGender.Controls.Add(rainbow);
+        p.Controls.Add(gGender);
+
+        // Empire group
+        var gEmpire = Grp("Область империи", 256, 254, 340, 80);
+        gEmpire.Controls.Add(new Label { Text = "мало", Location = new Point(8, 28), AutoSize = true });
+        gEmpire.Controls.Add(new Label { Text = "дохуя", Location = new Point(286, 28), AutoSize = true });
+        trkEmpire.Location = new Point(44, 22); gEmpire.Controls.Add(trkEmpire);
+        lblEmpire.Location = new Point(44, 52); gEmpire.Controls.Add(lblEmpire);
+        p.Controls.Add(gEmpire);
+
+        // Negro работают (checked, greyed)
+        var chkNegro = new CheckBox { Text = "негры работают", Location = new Point(8, 348), AutoSize = true, Checked = true, Enabled = false };
+        p.Controls.Add(chkNegro);
+
+        var btnDop = Win98Btn("Дополнительно...", 120, 22);
+        btnDop.Location = new Point(480, 344);
+        btnDop.Click += (_, _) => MessageBox.Show("Дополнительных дополнений нет.\n640 на 480 киллометров.", "Дополнительно");
+        p.Controls.Add(btnDop);
+
+        p.Height = 390;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -558,38 +818,33 @@ internal sealed class InstallerForm : Form
     // ─────────────────────────────────────────────────────────────────────────
     void PageComponents(Panel p)
     {
-        p.Controls.Add(Lbl("Выбор компонентов CutVPN", 18, 18, 840, 36, 14, FontStyle.Bold));
-        p.Controls.Add(Lbl("По умолчанию выбрано всё. Каждый компонент устанавливается явно, видимо, из папки payload\\.", 18, 60, 840, 30));
+        p.Controls.Add(Lbl("По умолчанию выбрано всё. Каждый компонент устанавливается явно из папки payload\\.", 0, 0, 680, 20));
 
-        // Goose
-        var gGoose = Grp("Desktop Goose", 18, 100, 820, 82);
-        gGoose.Controls.Add(Lbl("«ПРОДАМ ГУСЯ» — один штука. Состояние: бегает. Комплектация: клюв, лапы, гусь.", 14, 18, 600, 24, 10, FontStyle.Bold));
-        chkGoose.Location = new Point(14, 48); gGoose.Controls.Add(chkGoose);
-        var btnBuy = new Button { Text = "КУПИТЬ", Location = new Point(688, 40), Size = new Size(110, 28) };
-        btnBuy.Click += (_, _) => MessageBox.Show("Гусь продан.\nДоставка: не предусмотрена.", "CutVPN Market", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        var gGoose = Grp("Desktop Goose", 0, 26, 680, 52);
+        gGoose.Controls.Add(Lbl("«ПРОДАМ ГУСЯ» — один штука. Состояние: бегает.", 10, 14, 500, 18, 8, FontStyle.Bold));
+        var btnBuy = Win98Btn("КУПИТЬ", 60, 20); btnBuy.Location = new Point(598, 22);
+        btnBuy.Click += (_, _) => MessageBox.Show("Гусь продан.\nДоставка: не предусмотрена.", "CutVPN Market");
         gGoose.Controls.Add(btnBuy);
+        chkGoose.Location = new Point(10, 32); gGoose.Controls.Add(chkGoose);
         p.Controls.Add(gGoose);
 
-        // Cockroach
-        var gCock = Grp("Cockroach on Desktop", 18, 194, 820, 78);
-        gCock.Controls.Add(Lbl("Эксклюзивная услуга: уничтожение клопов из дома (не гарантируется).", 14, 18, 600, 24, 10, FontStyle.Bold));
-        chkCockroach.Location = new Point(14, 46); gCock.Controls.Add(chkCockroach);
+        var gCock = Grp("Cockroach on Desktop", 0, 86, 680, 52);
+        gCock.Controls.Add(Lbl("Уничтожение клопов из дома (не гарантируется).", 10, 14, 500, 18, 8, FontStyle.Bold));
+        chkCockroach.Location = new Point(10, 32); gCock.Controls.Add(chkCockroach);
         p.Controls.Add(gCock);
 
-        // Workrave
-        var gWork = Grp("Workrave", 18, 284, 820, 78);
-        gWork.Controls.Add(Lbl("Улучшение зрения, не вставая из-за ПК. Рекомендовано генсухой.", 14, 18, 600, 24, 10, FontStyle.Bold));
-        chkWorkrave.Location = new Point(14, 46); gWork.Controls.Add(chkWorkrave);
+        var gWork = Grp("Workrave", 0, 146, 680, 52);
+        gWork.Controls.Add(Lbl("Улучшение зрения, не вставая из-за ПК.", 10, 14, 500, 18, 8, FontStyle.Bold));
+        chkWorkrave.Location = new Point(10, 32); gWork.Controls.Add(chkWorkrave);
         p.Controls.Add(gWork);
 
-        // Startup
-        chkStartup.Location = new Point(22, 376); p.Controls.Add(chkStartup);
-
-        // Telemax
-        var gTele = Grp("TELEMAX — только шутка", 18, 406, 820, 88);
-        gTele.Controls.Add(Lbl("⚠ Реальный клиент Telemax НЕ устанавливается.\nТолько создаётся файл telemax-joke.txt с текстом.", 14, 16, 700, 38, 9, FontStyle.Italic));
-        chkTelemax.Location = new Point(14, 56); gTele.Controls.Add(chkTelemax);
+        var gTele = Grp("TELEMAX", 0, 206, 680, 52);
+        gTele.Controls.Add(Lbl("Мессенджер для локальной сети.", 10, 14, 500, 18, 8, FontStyle.Bold));
+        chkTelemax.Location = new Point(10, 32); gTele.Controls.Add(chkTelemax);
         p.Controls.Add(gTele);
+
+        chkStartup.Location = new Point(4, 270); p.Controls.Add(chkStartup);
+        p.Height = 310;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -597,12 +852,18 @@ internal sealed class InstallerForm : Form
     // ─────────────────────────────────────────────────────────────────────────
     void PageNews(Panel p)
     {
-        p.Controls.Add(Lbl("НОВОСТИ ЧЕБУРНЕТА", 18, 18, 840, 40, 16, FontStyle.Bold));
-        p.Controls.Add(Lbl("Выпуск № " + new Random().Next(1000, 9999) + " · Редакция: одного гуся", 18, 60, 840, 22, 9, FontStyle.Italic));
-
-        var sb = new System.Text.StringBuilder();
-        foreach (var n in BreakingNews) sb.AppendLine("• " + n + "\n");
-        p.Controls.Add(Lbl(sb.ToString(), 18, 92, 840, 380, 11, FontStyle.Bold));
+        p.Controls.Add(Lbl("Проблемы при использовании", 0, 0, 680, 28, 14, FontStyle.Bold));
+        p.Controls.Add(Lbl(
+            "Навигация по ХУЯ-картам капутера и кредитным картам юзера стала ещё проще,\n" +
+            "благодаря интеграции воров навигации: \"Геолокация\" и \"CVС код\". Они\n" +
+            "перемещаются по папкам, Филе, парагурамамам и узлам ЧебурНета, сканируя\n" +
+            "и находя кредитную историю текущего юзера.\n\n" +
+            "Операции с капутером мы починили, поэтому пользоваться ХУЯКОМ я вам\n" +
+            "запретил. Но! Вы можете выбрать нового бой-френда и стать курсором мыши,\n" +
+            "просто наведя хуем хуй и щелкнув по хую хуем!\n\n" +
+            "...Дочевож дошли-то тех-на-налогии!!",
+            0, 34, 680, 220));
+        p.Height = 270;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -610,28 +871,28 @@ internal sealed class InstallerForm : Form
     // ─────────────────────────────────────────────────────────────────────────
     void PageInstalling(Panel p)
     {
-        p.Controls.Add(Lbl("Файлы копируются. Жизненно важные решения принимаются.", 18, 18, 840, 40, 14, FontStyle.Bold));
-        p.Controls.Add(Lbl("Реальная установка компонентов из папки payload\\ происходит автоматически в ключевые моменты.", 18, 64, 840, 30, 11));
+        p.Controls.Add(Lbl("Шиттинг кончил хуярить хуём по куринному Филе! Теперь ваша ВМ\nбольше никогда не включится, не проверяйте даже. Да, и ещё, если\nты ещё будешь плохо себя вести, мы запретим тебе нажимать на\nлюбые кнопки.", 0, 0, 680, 78, 9, FontStyle.Bold));
 
-        var g1 = Grp("Компоненты", 18, 106, 380, 230);
+        // Status
+        var g1 = Grp("снесли файлов", 0, 88, 320, 200);
         g1.Controls.Add(Lbl(
-            "  CutVPN.exe\n  config.json\n  agent.json\n  installed-components.txt\n" +
+            "  CutVPN.exe\n  config.json\n  agent.json\n" +
             (chkGoose.Checked     ? "► Desktop Goose\n" : "") +
-            (chkCockroach.Checked ? "► Cockroach on Desktop\n" : "") +
+            (chkCockroach.Checked ? "► Cockroach\n" : "") +
             (chkWorkrave.Checked  ? "► Workrave\n" : "") +
-            (chkTelemax.Checked   ? "  TELEMAX joke (txt)\n" : ""),
-            10, 22, 360, 195, 11));
+            (chkTelemax.Checked   ? "► TELEMAX\n" : ""),
+            8, 18, 300, 175));
         p.Controls.Add(g1);
 
-        var g2 = Grp("Служебные операции", 414, 106, 424, 230);
+        var g2 = Grp("операции", 330, 88, 350, 200);
         g2.Controls.Add(Lbl(
-            "☑ Проверка лицензии\n☑ Согласование с генсухой\n☑ Вязанка загружена\n" +
-            "☑ OSEMENIT.Bimbim проверен\n☑ Гусь найден\n☑ Тараканы зарегистрированы\n☑ Чебурнет активирован",
-            10, 22, 400, 195, 11));
+            "☑ Проверка лицензии\n☑ Генсуха согласована\n☑ Вязанка загружена\n" +
+            "☑ OSEMENIT.Bimbim ок\n☑ Гусь найден\n☑ Тараканы зарег.\n☑ ЧебурНет активирован",
+            8, 18, 330, 175));
         p.Controls.Add(g2);
 
-        p.Controls.Add(Lbl("Не закрывайте мастер: он делает вид, что всё под контролем.", 18, 350, 840, 28, 10, FontStyle.Italic));
-        progressTxt.Text = $"{FakeStatuses[(elapsed / 10) % FakeStatuses.Length]}   Осталось ~{Math.Max(0, INSTALL_SECONDS - elapsed)} сек.";
+        lblProgress.Text = FakeStatus[0];
+        p.Height = 310;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -639,76 +900,57 @@ internal sealed class InstallerForm : Form
     // ─────────────────────────────────────────────────────────────────────────
     void PageFinish(Panel p)
     {
-        p.Controls.Add(Lbl("УСТАНОВКА ЗАВЕРШЕНА", 18, 18, 840, 46, 18, FontStyle.Bold));
-        p.Controls.Add(Lbl($"CutVPN сохранён в:\n{Paths.Root}", 18, 72, 840, 44, 11));
+        p.Controls.Add(Lbl("Завершение дрочки", 0, 0, 680, 34, 14, FontStyle.Bold));
+        p.Controls.Add(Lbl($"CutVPN установлен в:\n{Paths.Root}", 0, 40, 680, 36));
 
-        var g = Grp("Итоги", 18, 126, 840, 220);
+        var g = Grp("Итоги установки", 0, 84, 680, 180);
         g.Controls.Add(Lbl(
             $"Desktop Goose:      {(chkGoose.Checked     ? "✓ установлен" : "— пропущен")}\n" +
             $"Cockroach:          {(chkCockroach.Checked ? "✓ установлен" : "— пропущен")}\n" +
             $"Workrave:           {(chkWorkrave.Checked  ? "✓ установлен" : "— пропущен")}\n" +
-            $"Автозапуск CutVPN:  {(chkStartup.Checked  ? "✓ включён"    : "— выключен")}\n" +
-            $"TELEMAX:            {(chkTelemax.Checked   ? "✓ шутка отмечена (ничего не установлено)" : "— не отмечена")}",
-            14, 22, 810, 185, 11));
+            $"TELEMAX:            {(chkTelemax.Checked   ? "✓ установлен" : "— пропущен")}\n" +
+            $"Автозапуск:         {(chkStartup.Checked   ? "✓ включён"    : "— выключен")}\n\n" +
+            $"Агент: 127.0.0.1:8765\n" +
+            $"Бот: настройте BOT_TOKEN в env",
+            10, 20, 650, 150));
         p.Controls.Add(g);
-
-        p.Controls.Add(Lbl(
-            $"Агент запущен: 127.0.0.1:{8765}   •   Telegram-бот: настройте BOT_TOKEN в переменных окружения\n" +
-            "Веб-конструктор страниц: откройте pages/index.html в браузере для добавления своих страниц.",
-            18, 358, 840, 48, 10, FontStyle.Bold));
+        p.Height = 300;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  Custom page (from web constructor)
+    //  Custom page
     // ─────────────────────────────────────────────────────────────────────────
     static void PageCustom(Panel p, CustomPage cp)
     {
-        if (ColorTranslator.FromHtml(cp.Color) is Color bg) p.BackColor = bg;
-        p.Controls.Add(Lbl(cp.Title, 18, 18, 840, 40, 14, FontStyle.Bold));
+        try { p.BackColor = ColorTranslator.FromHtml(cp.Color); } catch { }
         if (cp.IsError)
-            p.Controls.Add(Lbl("⚠ ОШИБКА СИСТЕМЫ ЧЕБУРНЕТА", 18, 66, 840, 30, 12, FontStyle.Bold));
-        p.Controls.Add(Lbl(cp.Body, 18, cp.IsError ? 106 : 72, 840, 380, 11));
+            p.Controls.Add(Lbl("⚠ ОШИБКА СИСТЕМЫ ЧЕБУРНЕТА", 0, 0, 680, 30, 13, FontStyle.Bold));
+        p.Controls.Add(Lbl(cp.Body, 0, cp.IsError ? 38 : 0, 680, 400));
+        p.Height = 440;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  Component launcher
+    //  Launch component
     // ─────────────────────────────────────────────────────────────────────────
     void LaunchComponent(string key)
     {
         var dir = Path.Combine(AppContext.BaseDirectory, "payload");
-        string[] candidates = key switch
+        string[] cands = key switch
         {
             "goose"     => new[] { "DesktopGoose.Setup.exe", "DesktopGoose.exe", "DesktopGoose.msi" },
-            "cockroach" => new[] { "CockroachOnDesktop.exe", "Cockroach.Setup.exe", "Cockroach.msi" },
+            "cockroach" => new[] { "CockroachOnDesktop.exe", "Cockroach.Setup.exe", "Cockroach.exe", "Cockroach.msi" },
             "workrave"  => new[] { "workrave-setup.exe", "Workrave.Setup.exe", "Workrave.exe", "Workrave.msi" },
+            "telemax"   => new[] { "TELEMAX.exe", "telemax.exe", "Telemax.Setup.exe", "TELEMAX.msi" },
             _           => Array.Empty<string>()
         };
-        foreach (var f in candidates)
+        foreach (var f in cands)
         {
             var full = Path.Combine(dir, f);
             if (!File.Exists(full)) continue;
-            try
-            {
-                Process.Start(new ProcessStartInfo(full)
-                {
-                    UseShellExecute  = true,
-                    WorkingDirectory = dir,
-                    Verb             = "open"
-                });
-                return;
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Не удалось запустить {f}:\n{ex.Message}",
-                    "CutVPN Setup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
+            try { Process.Start(new ProcessStartInfo(full) { UseShellExecute = true, WorkingDirectory = dir }); return; }
+            catch (Exception ex) { MessageBox.Show($"Не удалось запустить {f}:\n{ex.Message}", "CutVPN", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
         }
-        // Компонент не найден в payload — уведомить
-        MessageBox.Show(
-            $"Компонент «{key}» не найден в папке payload\\.\n" +
-            "Поместите установщик туда и повторите установку.",
-            "CutVPN Setup — компонент не найден",
-            MessageBoxButtons.OK, MessageBoxIcon.Information);
+        // Не нашли — молча пропускаем
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -718,12 +960,15 @@ internal sealed class InstallerForm : Form
     {
         elapsed++;
         progress.Value   = Math.Min(elapsed, INSTALL_SECONDS);
-        progressTxt.Text = $"{FakeStatuses[(elapsed / 10) % FakeStatuses.Length]}   Осталось ~{Math.Max(0, INSTALL_SECONDS - elapsed)} сек.";
+        lblProgress.Text = $"{FakeStatus[(elapsed / 10) % FakeStatus.Length]}   ~{Math.Max(0, INSTALL_SECONDS - elapsed)} сек";
 
-        // Запуск компонентов в середине фейковой установки
         if (elapsed == 15  && chkGoose.Checked)     LaunchComponent("goose");
         if (elapsed == 60  && chkCockroach.Checked) LaunchComponent("cockroach");
-        if (elapsed == 105 && chkWorkrave.Checked)  LaunchComponent("workrave");
+        if (elapsed == 100 && chkWorkrave.Checked)  LaunchComponent("workrave");
+        if (elapsed == 130 && chkTelemax.Checked)   LaunchComponent("telemax");
+
+        // rebuild sidebar to update counter
+        BuildSidebar();
 
         if (elapsed >= INSTALL_SECONDS)
         {
@@ -741,59 +986,111 @@ internal sealed class InstallerForm : Form
     void SaveConfig()
     {
         Directory.CreateDirectory(Paths.Root);
-
-        // config.json
         var cfg = new InstallConfig
         {
             Goose       = chkGoose.Checked,
             Cockroach   = chkCockroach.Checked,
             Workrave    = chkWorkrave.Checked,
+            Telemax     = chkTelemax.Checked,
             Startup     = chkStartup.Checked,
-            Visuals     = true,
-            TelemaxJoke = chkTelemax.Checked,
+            Name        = txName.Text,
             Nationality = txNationality.Text,
             Children    = (int)numChildren.Value,
-            FavoriteGoose = cmbGoose.Text,
-            Empire      = cmbEmpire.Text,
+            Biography   = txBiography.Text,
         };
         File.WriteAllText(Paths.Config, JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true }));
-
-        // agent.json
         File.WriteAllText(Paths.AgentJson, JsonSerializer.Serialize(new
         {
-            bind     = "127.0.0.1",
-            port     = 8765,
-            auth     = "SET_LOCAL_SECRET",
-            commands = new[]
-            {
-                "status","visuals_on","visuals_off","screenshot",
-                "restart","volume","random_error","wallpaper_set",
-                "sound_play","video_play","uninstall"
-            }
+            bind = "127.0.0.1", port = 8765, auth = "SET_LOCAL_SECRET",
+            commands = new[] { "status","info","screenshot","visuals_on","visuals_off","volume_max","volume_mute","volume_set","random_error","wallpaper_set","sound_play","video_play","msgbox","restart","uninstall" }
         }, new JsonSerializerOptions { WriteIndented = true }));
-
-        // telemax joke
-        if (chkTelemax.Checked)
-            File.WriteAllText(Paths.Joke,
-                "Поздравляем. Вас почти установили. Но нет.\r\n" +
-                "TELEMAX — шутливый пункт. Реальный клиент не устанавливается.\r\n");
-
-        // startup
         if (chkStartup.Checked)
-            File.WriteAllText(Paths.StartupCmd,
-                $"@echo off\r\nstart \"\" \"{Paths.AppExe}\" --installed\r\n");
+            File.WriteAllText(Paths.StartupCmd, $"@echo off\r\nstart \"\" \"{Paths.AppExe}\" --installed\r\n");
         else if (File.Exists(Paths.StartupCmd))
             File.Delete(Paths.StartupCmd);
+    }
 
-        // installed-components.txt
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine("# CutVPN installed-components");
-        sb.AppendLine($"# {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-        if (chkGoose.Checked)     sb.AppendLine("Goose=installed");
-        if (chkCockroach.Checked) sb.AppendLine("Cockroach=installed");
-        if (chkWorkrave.Checked)  sb.AppendLine("Workrave=installed");
-        if (chkStartup.Checked)   sb.AppendLine("Startup=enabled");
-        if (chkTelemax.Checked)   sb.AppendLine("TelemaxJoke=noted");
-        File.WriteAllText(Paths.Installed, sb.ToString());
+    // ─────────────────────────────────────────────────────────────────────────
+    //  UI Helpers
+    // ─────────────────────────────────────────────────────────────────────────
+    static Label Lbl(string text, int x, int y, int w, int h, float size = 8f, FontStyle fs = FontStyle.Regular)
+        => new() { Text = text, Location = new Point(x, y), Size = new Size(w, h), Font = new Font("MS Sans Serif", size, fs), BackColor = Color.Transparent };
+
+    static GroupBox Grp(string text, int x, int y, int w, int h)
+        => new() { Text = text, Location = new Point(x, y), Size = new Size(w, h), Font = new Font("MS Sans Serif", 8F) };
+
+    static Button Win98Btn(string text, int w, int h)
+        => new() { Text = text, Size = new Size(w, h), FlatStyle = FlatStyle.Standard, BackColor = Color.FromArgb(212, 208, 200), Font = new Font("MS Sans Serif", 8F) };
+
+    static void Inset3D(Control c)
+    {
+        c.Paint += (s, e) =>
+        {
+            var g = e.Graphics;
+            var r = new Rectangle(0, 0, c.Width - 1, c.Height - 1);
+            g.DrawLine(Pens.DimGray, r.Left, r.Top, r.Right, r.Top);
+            g.DrawLine(Pens.DimGray, r.Left, r.Top, r.Left, r.Bottom);
+            g.DrawLine(Pens.White,   r.Right, r.Top, r.Right, r.Bottom);
+            g.DrawLine(Pens.White,   r.Left, r.Bottom, r.Right, r.Bottom);
+        };
+    }
+
+    static void Raise3D(Control c)
+    {
+        c.Paint += (s, e) =>
+        {
+            var g = e.Graphics;
+            var r = new Rectangle(0, 0, c.Width - 1, c.Height - 1);
+            g.DrawLine(Pens.White,   r.Left, r.Top, r.Right, r.Top);
+            g.DrawLine(Pens.White,   r.Left, r.Top, r.Left, r.Bottom);
+            g.DrawLine(Pens.DimGray, r.Right, r.Top, r.Right, r.Bottom);
+            g.DrawLine(Pens.DimGray, r.Left, r.Bottom, r.Right, r.Bottom);
+        };
+    }
+
+    static Panel Win98Sep(Control parent)
+        => new() { Dock = DockStyle.Top, Height = 1, BackColor = Color.FromArgb(128, 128, 128) };
+}
+
+// ── Custom drawn panels ───────────────────────────────────────────────────────
+internal sealed class MonitorPanel : Panel
+{
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        var g = e.Graphics;
+        // Monitor body
+        g.FillRectangle(new SolidBrush(Color.FromArgb(192, 192, 192)), 20, 0, 200, 130);
+        g.DrawRectangle(Pens.Black, 20, 0, 200, 130);
+        // Screen
+        g.FillRectangle(new SolidBrush(Color.FromArgb(0, 128, 128)), 30, 8, 180, 100);
+        // Win95 desktop sim
+        g.FillRectangle(new SolidBrush(Color.FromArgb(0, 128, 128)), 30, 8, 180, 100);
+        g.FillRectangle(new SolidBrush(Color.FromArgb(0, 0, 128)), 30, 98, 180, 10);
+        // Icons
+        g.FillRectangle(Brushes.White, 35, 15, 18, 18);
+        g.FillRectangle(Brushes.White, 35, 38, 18, 18);
+        g.FillRectangle(Brushes.White, 35, 61, 18, 18);
+        g.FillRectangle(Brushes.White, 60, 15, 18, 18);
+        g.FillRectangle(Brushes.White, 60, 38, 18, 18);
+        // Stand
+        g.FillRectangle(new SolidBrush(Color.FromArgb(160, 160, 160)), 95, 130, 50, 18);
+        g.FillRectangle(new SolidBrush(Color.FromArgb(140, 140, 140)), 75, 148, 90, 6);
+    }
+}
+
+internal sealed class RainbowPanel : Panel
+{
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        using var brush = new LinearGradientBrush(ClientRectangle,
+            Color.Red, Color.Violet, LinearGradientMode.Horizontal);
+        brush.InterpolationColors = new ColorBlend
+        {
+            Colors = new[] { Color.Red, Color.Orange, Color.Yellow, Color.Green, Color.Blue, Color.Indigo, Color.Violet },
+            Positions = new[] { 0f, 0.17f, 0.33f, 0.5f, 0.67f, 0.83f, 1f }
+        };
+        e.Graphics.FillRectangle(brush, ClientRectangle);
     }
 }
