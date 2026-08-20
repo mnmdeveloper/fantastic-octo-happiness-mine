@@ -1,350 +1,470 @@
 using System;
+using System.Diagnostics;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.IO;
+using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.Json;
 using System.Windows.Forms;
 
 namespace CutVPN;
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Entry
+// ─────────────────────────────────────────────────────────────────────────────
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    static void Main()
     {
         ApplicationConfiguration.Initialize();
         Application.SetHighDpiMode(HighDpiMode.SystemAware);
-        Application.Run(new CutVpnApp());
+        Application.Run(new CutVpnTray());
     }
 }
 
-internal sealed class CutVpnApp : ApplicationContext
+// ─────────────────────────────────────────────────────────────────────────────
+//  Paths
+// ─────────────────────────────────────────────────────────────────────────────
+internal static class Paths
 {
-    private readonly NotifyIcon tray;
-    private MainForm? main;
-    private bool prankMode;
+    public static string Root     => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CutVPN");
+    public static string Config   => Path.Combine(Root, "config.json");
+    public static string State    => Path.Combine(Root, "prank.state");
+    public static string AgentJson => Path.Combine(Root, "agent.json");
+}
 
-    internal CutVpnApp()
+// ─────────────────────────────────────────────────────────────────────────────
+//  Tray application
+// ─────────────────────────────────────────────────────────────────────────────
+internal sealed class CutVpnTray : ApplicationContext
+{
+    [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mod, uint vk);
+    [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
+
+    readonly NotifyIcon  tray;
+    readonly HotkeyWindow hkWnd;
+    bool visuals;
+
+    static readonly string[] RandomErrors =
     {
-        prankMode = LoadPrankState();
+        "Ошибка 0xGUSB: буфер переполнен вязанкой",
+        "GENSUHA.dll недоступна: генсуха пьёт чай",
+        "OSEMENIT.Bimbim не отвечает (задумался)",
+        "Гусь заблокировал системный вызов",
+        "Вязанка не прошла проверку целостности",
+        "Тараканы не приняли EULA",
+        "Framework по доению коровы упал с ошибкой 418",
+        "CutVPN: подключение разорвано гусём",
+        "Ядро Чебурнета: требуется перезагрузка мировоззрения",
+    };
+
+    internal CutVpnTray()
+    {
+        visuals = LoadVisuals();
+
         tray = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
-            Text = "CutVPN — Cheburetnet",
+            Icon    = BuildIcon(),
+            Text    = "CutVPN — Cheburetnet",
             Visible = true,
-            ContextMenuStrip = BuildTrayMenu()
+            ContextMenuStrip = BuildMenu()
         };
-        tray.DoubleClick += (_, _) => ShowMain();
-        if (prankMode) ShowWizard(); else ShowMain();
+        tray.DoubleClick += (_, _) => ShowDashboard();
+
+        // Hotkey window
+        hkWnd = new HotkeyWindow();
+        hkWnd.OnStopKey += () =>
+        {
+            visuals = false; SaveVisuals(false);
+            tray.ShowBalloonTip(1200, "CutVPN", "Стоп-кран сработал. Визуалы отключены.", ToolTipIcon.Warning);
+        };
+
+        // Start local agent
+        AgentServer.Start();
+        AgentServer.OnCommand += HandleAgentCommand;
     }
 
-    private ContextMenuStrip BuildTrayMenu()
+    // ── tray icon (painted in code) ───────────────────────────────────────────
+    static Icon BuildIcon()
     {
-        var m = new ContextMenuStrip();
-        m.Items.Add("Открыть CutVPN", null, (_, _) => ShowMain());
-        m.Items.Add("Включить пранк", null, (_, _) => SetPrank(true));
-        m.Items.Add("Отключить визуалы", null, (_, _) => SetPrank(false));
-        m.Items.Add("Обновление системы безопасности", null, (_, _) => ShowSecurityUpdate());
-        m.Items.Add("Случайная хуйня", null, (_, _) => ShowRandomError());
+        using var bmp = new Bitmap(32, 32);
+        using var g   = Graphics.FromImage(bmp);
+        g.Clear(Color.FromArgb(0, 0, 128));
+        using var f = new Font("Tahoma", 16f, FontStyle.Bold);
+        g.DrawString("C", f, Brushes.White, 2, 4);
+        return Icon.FromHandle(bmp.GetHicon());
+    }
+
+    ContextMenuStrip BuildMenu()
+    {
+        var m = new ContextMenuStrip { Font = new Font("Tahoma", 9f) };
+
+        var header = new ToolStripMenuItem("CutVPN  v1.0") { Enabled = false };
+        m.Items.Add(header);
         m.Items.Add(new ToolStripSeparator());
-        m.Items.Add("Стоп-кран Ctrl+Shift+G", null, (_, _) => EmergencyStop());
-        m.Items.Add("Выйти из CutVPN", null, (_, _) => ExitApplication());
+
+        var statusItem = new ToolStripMenuItem("Статус: ONLINE") { Enabled = false, ForeColor = Color.DarkGreen };
+        m.Items.Add(statusItem);
+        m.Items.Add(new ToolStripSeparator());
+
+        m.Items.Add("Открыть панель управления", null, (_, _) => ShowDashboard());
+        m.Items.Add(new ToolStripSeparator());
+
+        m.Items.Add("Включить визуалы",        null, (_, _) => { visuals = true;  SaveVisuals(true);  Notify("Визуалы включены."); });
+        m.Items.Add("Отключить визуалы",       null, (_, _) => { visuals = false; SaveVisuals(false); Notify("Визуалы отключены."); });
+        m.Items.Add("Случайная тупая ошибка",  null, (_, _) => ShowRandomError());
+        m.Items.Add("Перезапустить CutVPN",    null, (_, _) => Restart());
+        m.Items.Add(new ToolStripSeparator());
+
+        m.Items.Add("Удалить CutVPN",          null, (_, _) => Uninstall());
+        m.Items.Add("Выход",                   null, (_, _) => Exit());
         return m;
     }
 
-    internal void SetPrank(bool value)
+    // ── dashboard ─────────────────────────────────────────────────────────────
+    void ShowDashboard()
     {
-        prankMode = value;
-        SavePrankState(value);
-        if (value) ShowWizard();
-        else tray.ShowBalloonTip(900, "CutVPN", "Визуалы выключены.", ToolTipIcon.Info);
+        var f = new DashboardForm(this);
+        f.Show();
+        f.BringToFront();
     }
 
-    internal void ShowMain()
+    // ── helpers ───────────────────────────────────────────────────────────────
+    internal void ShowRandomError()
     {
-        if (main is null || main.IsDisposed) main = new MainForm(this);
-        main.Show();
-        main.WindowState = FormWindowState.Normal;
-        main.Activate();
+        var msg = RandomErrors[Random.Shared.Next(RandomErrors.Length)];
+        MessageBox.Show(msg, "CutVPN — Диагностика Чебурнета", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
-    internal void ShowWizard()
+    internal string GetStatus() => "ONLINE";
+    internal bool   Visuals     => visuals;
+
+    internal void SetVisuals(bool v) { visuals = v; SaveVisuals(v); }
+
+    void Notify(string msg) => tray.ShowBalloonTip(900, "CutVPN", msg, ToolTipIcon.Info);
+
+    void Restart()
     {
-        using var wizard = new InstallWizard(this);
-        wizard.ShowDialog();
-        if (prankMode) ShowMain();
+        var exe = Application.ExecutablePath;
+        Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true });
+        Exit();
     }
 
-    private void ShowSecurityUpdate()
+    void Uninstall()
     {
-        using var wizard = new InstallWizard(this, "Обновление системы безопасности");
-        wizard.ShowDialog();
+        if (MessageBox.Show("Удалить CutVPN?\nЭто удалит все файлы из %LOCALAPPDATA%\\CutVPN\\.",
+                "CutVPN Uninstall", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+        try
+        {
+            var cmd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "CutVPN.cmd");
+            if (File.Exists(cmd)) File.Delete(cmd);
+            if (Directory.Exists(Paths.Root)) Directory.Delete(Paths.Root, true);
+        }
+        catch { }
+        Exit();
     }
 
-    private void ShowRandomError()
+    void Exit()
     {
-        var text = PrankContent.RandomErrors[Random.Shared.Next(PrankContent.RandomErrors.Length)];
-        MessageBox.Show(text, "CutVPN — Диагностика Чебурнета", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-    }
-
-    private void ExitApplication()
-    {
-        main?.Close();
+        AgentServer.Stop();
+        hkWnd.Destroy();
         tray.Visible = false;
         tray.Dispose();
         Application.ExitThread();
     }
 
-    internal void EmergencyStop()
+    void HandleAgentCommand(string command, JsonElement body, Action<object> reply)
     {
-        prankMode = false;
-        SavePrankState(false);
-        tray.ShowBalloonTip(1000, "CutVPN", "Стоп-кран сработал. Визуалы отключены.", ToolTipIcon.Warning);
+        switch (command)
+        {
+            case "status":      reply(new { status = "ok", message = GetStatus() }); break;
+            case "visuals_on":  SetVisuals(true);  reply(new { status = "ok", message = "visuals on" }); break;
+            case "visuals_off": SetVisuals(false); reply(new { status = "ok", message = "visuals off" }); break;
+            case "random_error":
+                Application.OpenForms[0]?.BeginInvoke(() => ShowRandomError());
+                reply(new { status = "ok", message = "error shown" });
+                break;
+            case "restart":
+                Application.OpenForms[0]?.BeginInvoke(() => Restart());
+                reply(new { status = "ok", message = "restarting" });
+                break;
+            case "screenshot":
+                var path = TakeScreenshot();
+                reply(new { status = "ok", message = path });
+                break;
+            case "uninstall":
+                Application.OpenForms[0]?.BeginInvoke(() => Uninstall());
+                reply(new { status = "ok", message = "uninstalling" });
+                break;
+            default:
+                reply(new { status = "error", message = $"unknown command: {command}" });
+                break;
+        }
     }
 
-    internal bool IsPrankMode => prankMode;
-
-    private static string StatePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CutVPN", "prank.state");
-    private static bool LoadPrankState() => File.Exists(StatePath) && File.ReadAllText(StatePath).Trim() == "on";
-
-    private static void SavePrankState(bool enabled)
+    static string TakeScreenshot()
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(StatePath)!);
-        File.WriteAllText(StatePath, enabled ? "on" : "off");
+        try
+        {
+            var bounds = Screen.PrimaryScreen?.Bounds ?? new Rectangle(0, 0, 1920, 1080);
+            using var bmp = new Bitmap(bounds.Width, bounds.Height);
+            using var g   = Graphics.FromImage(bmp);
+            g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+            var out_ = Path.Combine(Paths.Root, $"screenshot_{DateTime.Now:yyyyMMdd_HHmmss}.png");
+            bmp.Save(out_, System.Drawing.Imaging.ImageFormat.Png);
+            return out_;
+        }
+        catch (Exception e) { return $"error: {e.Message}"; }
+    }
+
+    static bool LoadVisuals()
+    {
+        if (File.Exists(Paths.State)) return File.ReadAllText(Paths.State).Trim() == "on";
+        return true;
+    }
+    static void SaveVisuals(bool v)
+    {
+        Directory.CreateDirectory(Paths.Root);
+        File.WriteAllText(Paths.State, v ? "on" : "off");
     }
 }
 
-internal sealed class MainForm : Form
+// ─────────────────────────────────────────────────────────────────────────────
+//  Dashboard form
+// ─────────────────────────────────────────────────────────────────────────────
+internal sealed class DashboardForm : Form
 {
-    private readonly CutVpnApp app;
-    private readonly Label status;
-    private readonly CheckBox prank;
+    readonly CutVpnTray app;
+    readonly Label statusLbl;
 
-    internal MainForm(CutVpnApp app)
+    internal DashboardForm(CutVpnTray app)
     {
         this.app = app;
-        Text = "CutVPN — Connection Manager";
-        StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(820, 520);
-        MinimumSize = new Size(820, 520);
-        BackColor = Color.FromArgb(236, 233, 216);
-        Font = new Font("Tahoma", 9F);
+        Text             = "CutVPN — Панель управления";
+        StartPosition    = FormStartPosition.CenterScreen;
+        ClientSize       = new Size(820, 520);
+        FormBorderStyle  = FormBorderStyle.FixedSingle;
+        MaximizeBox      = false;
+        BackColor        = Color.FromArgb(236, 233, 216);
+        Font             = new Font("Tahoma", 9F);
 
-        var titleBar = new Panel { Dock = DockStyle.Top, Height = 46, BackColor = Color.FromArgb(0, 0, 128) };
-        Controls.Add(titleBar);
-        titleBar.Controls.Add(new Label { Text = "CutVPN", ForeColor = Color.White, Font = new Font("Tahoma", 16F, FontStyle.Bold), AutoSize = true, Location = new Point(14, 10) });
+        // header
+        var hdr = new Panel { Dock = DockStyle.Top, Height = 48, BackColor = Color.FromArgb(0, 0, 128) };
+        hdr.Controls.Add(new Label { Text = "CutVPN  Control Panel", ForeColor = Color.White, Font = new Font("Tahoma", 15F, FontStyle.Bold), AutoSize = true, Location = new Point(16, 10) });
+        Controls.Add(hdr);
 
-        var body = new Panel { Location = new Point(15, 62), Size = new Size(790, 390), BorderStyle = BorderStyle.Fixed3D, BackColor = Color.White };
+        // body
+        var body = new Panel { Location = new Point(14, 62), Size = new Size(792, 400), BorderStyle = BorderStyle.Fixed3D, BackColor = Color.White };
         Controls.Add(body);
 
-        var logo = new Label { Text = "C", BackColor = Color.White, ForeColor = Color.FromArgb(0, 0, 128), BorderStyle = BorderStyle.FixedSingle, Font = new Font("Tahoma", 28F, FontStyle.Bold), TextAlign = ContentAlignment.MiddleCenter, Location = new Point(25, 24), Size = new Size(70, 70) };
+        // logo area
+        var logo = new Panel { Location = new Point(18, 18), Size = new Size(80, 80), BorderStyle = BorderStyle.FixedSingle, BackColor = Color.FromArgb(0, 0, 128) };
+        var logoTxt = new Label { Text = "C", ForeColor = Color.White, Font = new Font("Tahoma", 36F, FontStyle.Bold), TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill };
+        logo.Controls.Add(logoTxt);
         body.Controls.Add(logo);
-        body.Controls.Add(new Label { Text = "Virtual Private Network Connection", Font = new Font("Tahoma", 15F, FontStyle.Bold), ForeColor = Color.FromArgb(0, 51, 153), Location = new Point(115, 26), AutoSize = true });
-        body.Controls.Add(new Label { Text = "Очень серьёзный сетевой продукт с абсолютно несерьёзным содержимым.", Location = new Point(118, 58), AutoSize = true, ForeColor = Color.DimGray });
 
-        body.Controls.Add(new Label { Text = "VPN Server:", Location = new Point(30, 125), AutoSize = true });
-        var server = new ComboBox { Location = new Point(110, 121), Size = new Size(300, 24), DropDownStyle = ComboBoxStyle.DropDownList };
-        server.Items.AddRange(new object[] { "CutVPN Europe", "Cheburetnet Home", "GENSUHA Turbo", "Automatic" });
-        server.SelectedIndex = 0;
-        body.Controls.Add(server);
+        body.Controls.Add(new Label { Text = "CutVPN  1.0  Cheburetnet Edition", Font = new Font("Tahoma", 14F, FontStyle.Bold), ForeColor = Color.FromArgb(0, 0, 128), Location = new Point(116, 22), AutoSize = true });
+        body.Controls.Add(new Label { Text = "Очень серьёзный сетевой продукт с абсолютно несерьёзным содержимым.", Location = new Point(118, 56), AutoSize = true, ForeColor = Color.DimGray });
 
-        var connect = new Button { Text = "Connect", Location = new Point(430, 118), Size = new Size(120, 30) };
-        body.Controls.Add(connect);
-        status = new Label { Text = "Status: Disconnected", Location = new Point(30, 171), AutoSize = true, Font = new Font("Tahoma", 10F, FontStyle.Bold), ForeColor = Color.Maroon };
-        body.Controls.Add(status);
-        body.Controls.Add(new Label { Text = "Connection information\n\nServer       CutVPN Europe\nProtocol     Automatic\nIP address   Demo / not connected", Location = new Point(30, 208), AutoSize = true });
+        statusLbl = new Label { Text = "● Статус: ONLINE", Location = new Point(116, 80), AutoSize = true, Font = new Font("Tahoma", 11F, FontStyle.Bold), ForeColor = Color.DarkGreen };
+        body.Controls.Add(statusLbl);
 
-        prank = new CheckBox { Text = "Запускать пранк CutVPN при входе в Windows", Location = new Point(30, 330), AutoSize = true, Checked = app.IsPrankMode };
-        body.Controls.Add(prank);
-        prank.CheckedChanged += (_, _) => { if (prank.Checked != app.IsPrankMode) { if (prank.Checked) app.ShowWizard(); else app.EmergencyStop(); } };
+        // server selector
+        body.Controls.Add(new Label { Text = "VPN-сервер:", Location = new Point(26, 120), AutoSize = true });
+        var srv = new ComboBox { Location = new Point(120, 116), Width = 300, DropDownStyle = ComboBoxStyle.DropDownList };
+        srv.Items.AddRange(new object[] { "CutVPN Europe (Чебурнет)", "Gensuha Turbo", "OSEMENIT.Bimbim", "Automatic" });
+        srv.SelectedIndex = 0;
+        body.Controls.Add(srv);
 
-        connect.Click += (_, _) =>
+        var btnConnect = new Button { Text = "Подключить", Location = new Point(438, 114), Size = new Size(130, 28) };
+        btnConnect.Click += (_, _) =>
         {
-            bool connected = !status.Text.Contains("Connected", StringComparison.OrdinalIgnoreCase);
-            status.Text = connected ? "Status: Connected" : "Status: Disconnected";
-            status.ForeColor = connected ? Color.DarkGreen : Color.Maroon;
-            connect.Text = connected ? "Disconnect" : "Connect";
+            bool on = statusLbl.Text.Contains("ONLINE");
+            statusLbl.Text      = on ? "● Статус: OFFLINE" : "● Статус: ONLINE";
+            statusLbl.ForeColor = on ? Color.Maroon : Color.DarkGreen;
+            btnConnect.Text     = on ? "Подключить" : "Отключить";
         };
+        body.Controls.Add(btnConnect);
+
+        // buttons
+        void Btn(string text, int x, int y, EventHandler h)
+        {
+            var b = new Button { Text = text, Location = new Point(x, y), Size = new Size(180, 30) };
+            b.Click += h;
+            body.Controls.Add(b);
+        }
+
+        Btn("Включить визуалы",       26,  170, (_, _) => { app.SetVisuals(true);  MessageBox.Show("Визуалы включены."); });
+        Btn("Отключить визуалы",      224, 170, (_, _) => { app.SetVisuals(false); MessageBox.Show("Визуалы отключены."); });
+        Btn("Случайная ошибка",       422, 170, (_, _) => app.ShowRandomError());
+        Btn("Открыть конструктор",    620, 170, (_, _) => OpenConstructor());
+
+        body.Controls.Add(new Label { Text = "Инфо:", Location = new Point(26, 220), AutoSize = true });
+        body.Controls.Add(new Label
+        {
+            Text      = $"Агент: http://127.0.0.1:8765\nConfig: {Paths.Config}\nТелеграм-бот: BOT_TOKEN + CUTVPN_CHAT_ID",
+            Location  = new Point(80, 216),
+            Size      = new Size(680, 70),
+            Font      = new Font("Tahoma", 9F)
+        });
+
+        body.Controls.Add(new Label { Text = "Визуалы:", Location = new Point(26, 304), AutoSize = true });
+        var vis = new CheckBox { Text = "Включить prank visuals", Location = new Point(100, 300), AutoSize = true, Checked = app.Visuals };
+        vis.CheckedChanged += (_, _) => app.SetVisuals(vis.Checked);
+        body.Controls.Add(vis);
+
+        // footer
+        Controls.Add(new Label
+        {
+            Text      = "CutVPN  •  Ctrl+Shift+G — стоп-кран  •  Агент слушает на 127.0.0.1:8765",
+            Location  = new Point(14, 472),
+            AutoSize  = true,
+            ForeColor = Color.DimGray,
+            Font      = new Font("Tahoma", 8F)
+        });
+    }
+
+    static void OpenConstructor()
+    {
+        var pagesDir = Path.Combine(
+            Path.GetDirectoryName(Application.ExecutablePath) ?? ".",
+            "pages");
+        var html = Path.Combine(pagesDir, "index.html");
+        if (File.Exists(html))
+            Process.Start(new ProcessStartInfo(html) { UseShellExecute = true });
+        else
+            MessageBox.Show($"Конструктор не найден:\n{html}", "CutVPN", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 }
 
-internal sealed class InstallWizard : Form
+// ─────────────────────────────────────────────────────────────────────────────
+//  Hotkey message-only window
+// ─────────────────────────────────────────────────────────────────────────────
+internal sealed class HotkeyWindow : NativeWindow
 {
-    private readonly CutVpnApp app;
-    private readonly ProgressBar progress;
-    private readonly Label status;
-    private readonly Label pageTitle;
-    private readonly Label pageText;
-    private readonly Label news;
-    private readonly Button next;
-    private readonly System.Windows.Forms.Timer timer;
-    private int page;
-    private int progressValue;
+    [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mod, uint vk);
+    [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
 
-    private readonly string[] titles =
+    const uint MOD_CTRL = 0x0002, MOD_SHIFT = 0x0004;
+    const int  WM_HOTKEY = 0x0312;
+
+    public event Action? OnStopKey;
+
+    internal HotkeyWindow()
     {
-        "Персональные предложения",
-        "Спецпредложение: анти-клоп",
-        "ЭКСКЛЮЗИВНЫЙ ГУСЬ",
-        "Мастер шиттинга Чебурнета",
-        "Системная безопасность",
-        "Последние новости",
-        "Проверка необходимых компонентов",
-        "Финальная оптимизация"
-    };
-
-    private readonly string[] texts =
-    {
-        "Хотите улучшить зрение, не вставая из-за ПК?\n\nCutVPN совершенно случайно нашёл для вас Workrave.\n\nРекомендуется моргать. Желательно самостоятельно.",
-        "В вашем доме подозрительно много насекомых.\n\nCockroach on Desktop уже подготовил решение.\n\nБорьба с клопами начнётся после нажатия «Далее». Если ничего не произойдёт — значит, клопы испугались.",
-        "ПРОДАМ ГУСЯ.\n\nСостояние: бегает.\nКомплектация: клюв, лапы, гусь.\nГарантия: не предоставляется.\n\n[ КУПИТЬ ] — единственная разумная кнопка.",
-        "Автоматическая настройка прокси-сервера.\n\nГенсуха согласует вязанку.\nОсеменение сетевого адаптера: 97%.\nГусь подключается к Чебурнету...",
-        "Установка обновления Framework по доению коровы.\n\nПроверяются: GENSUHA.dll, VYAZANKA.sys, OSEMENIT.Bimbim.\n\nНе выключайте компьютер, пока инженер не найдёт нужную вязанку.",
-        "СРОЧНАЯ НОВОСТЬ\n\nВязанка снова была замечена рядом с генсухой.\nГусь это отрицает.\n\nЭксперты продолжают наблюдение за Чебурнетом.",
-        "Проверка компонентов\n\nWorkrave ............... готов\nCockroach on Desktop .... готов\nDesktop Goose ........... готов\nЧебурнет ................ почти\nОсеменение .............. непонятно",
-        "Выполняется финальная оптимизация.\n\nСейчас мы скажем, что всё готово.\nПожалуйста, сделайте серьёзное лицо и дождитесь кнопки «Готово»."
-    };
-
-    internal InstallWizard(CutVpnApp app, string? customTitle = null)
-    {
-        this.app = app;
-        Text = customTitle ?? "CutVPN — Мастер шиттинга Чебурнета";
-        StartPosition = FormStartPosition.CenterScreen;
-        WindowState = FormWindowState.Maximized;
-        FormBorderStyle = FormBorderStyle.None;
-        BackColor = Color.FromArgb(192, 192, 192);
-        KeyPreview = true;
-
-        var top = new Panel { Dock = DockStyle.Top, Height = 58, BackColor = Color.FromArgb(0, 0, 128) };
-        Controls.Add(top);
-        top.Controls.Add(new Label { Text = Text, ForeColor = Color.White, Font = new Font("Tahoma", 16F, FontStyle.Bold), Location = new Point(24, 14), AutoSize = true });
-        var close = new Button { Text = "X", Font = new Font("Tahoma", 14F, FontStyle.Bold), Anchor = AnchorStyles.Top | AnchorStyles.Right, Size = new Size(38, 34), Location = new Point(Screen.PrimaryScreen!.Bounds.Width - 50, 12) };
-        close.Click += (_, _) => Close();
-        top.Controls.Add(close);
-
-        var left = new Panel { Location = new Point(18, 78), Size = new Size(260, Screen.PrimaryScreen.Bounds.Height - 160), BackColor = Color.FromArgb(225, 225, 225), BorderStyle = BorderStyle.FixedSingle };
-        Controls.Add(left);
-        left.Controls.Add(new FakePoster { Dock = DockStyle.Top, Height = 230 });
-        left.Controls.Add(new Label { Text = "CutVPN 98.ΞP-ЯК\n\nСертифицировано Генсухой.\nПроверено гусём.\nСогласовано вязанкой.\n\nСтатус: работает, наверное.", Location = new Point(14, 245), Size = new Size(230, 130), Font = new Font("Tahoma", 9F) });
-
-        var content = new Panel { Location = new Point(300, 78), Size = new Size(Screen.PrimaryScreen.Bounds.Width - 325, Screen.PrimaryScreen.Bounds.Height - 160), BackColor = Color.White, BorderStyle = BorderStyle.Fixed3D, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom };
-        Controls.Add(content);
-        pageTitle = new Label { Text = titles[0], Location = new Point(28, 26), AutoSize = true, Font = new Font("Tahoma", 20F, FontStyle.Bold), ForeColor = Color.FromArgb(0, 0, 128) };
-        content.Controls.Add(pageTitle);
-        pageText = new Label { Text = texts[0], Location = new Point(28, 82), Size = new Size(content.Width - 56, 245), Font = new Font("Tahoma", 12F), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
-        content.Controls.Add(pageText);
-        news = new Label { Text = "СРОЧНАЯ НОВОСТЬ: гусь сообщил, что вязанка снова ушла от ответственности.", Location = new Point(28, 338), Size = new Size(content.Width - 56, 46), ForeColor = Color.Navy, Font = new Font("Tahoma", 9F, FontStyle.Italic), Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom };
-        content.Controls.Add(news);
-
-        progress = new ProgressBar { Location = new Point(28, 400), Size = new Size(content.Width - 56, 27), Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom };
-        content.Controls.Add(progress);
-        status = new Label { Text = "Подготавливаем очень необходимые компоненты...", Location = new Point(28, 438), AutoSize = true, Anchor = AnchorStyles.Left | AnchorStyles.Bottom };
-        content.Controls.Add(status);
-
-        next = new Button { Text = "Далее >", Size = new Size(118, 36), Location = new Point(content.Width - 145, content.Height - 58), Anchor = AnchorStyles.Bottom | AnchorStyles.Right };
-        next.Click += (_, _) => NextPage();
-        content.Controls.Add(next);
-        var cancel = new Button { Text = "Отмена", Size = new Size(118, 36), Location = new Point(content.Width - 273, content.Height - 58), Anchor = AnchorStyles.Bottom | AnchorStyles.Right };
-        cancel.Click += (_, _) => Close();
-        content.Controls.Add(cancel);
-
-        var footer = new Label { Text = "CutVPN • Esc / Win+U — выйти из мастера • Ctrl+Shift+G — стоп-кран", Location = new Point(18, Screen.PrimaryScreen.Bounds.Height - 52), AutoSize = true, ForeColor = Color.DimGray };
-        Controls.Add(footer);
-
-        timer = new System.Windows.Forms.Timer { Interval = 180 };
-        timer.Tick += (_, _) => Animate();
-        timer.Start();
-        RegisterHotKey(Handle, 1001, 0x0008, (int)Keys.U);
-        RegisterHotKey(Handle, 1002, 0x0002 | 0x0004, (int)Keys.G);
-    }
-
-    private void Animate()
-    {
-        progressValue = Math.Min(100, progressValue + Random.Shared.Next(0, 3));
-        progress.Value = progressValue;
-        status.Text = new[]
-        {
-            "Упорядочиваем вязанку...",
-            "Согласовываем с генсухой...",
-            "Развлекаем системный Framework...",
-            "Проверяем, где гусь...",
-            "Ищем OSEMENIT.Bimbim...",
-            "Ускоряем Чебурнет...",
-            "Спрашиваем клопов, всё ли им нравится..."
-        }[Random.Shared.Next(7)];
-    }
-
-    private void NextPage()
-    {
-        page++;
-        if (page >= titles.Length)
-        {
-            timer.Stop();
-            progress.Value = 100;
-            status.Text = "Готово. Даже гусь это признал.";
-            pageTitle.Text = "Установка завершена";
-            pageText.Text = "CutVPN установлен.\n\nВнутри этого шуточного проекта предусмотрены сцены про Workrave, Cockroach on Desktop, Desktop Goose и Чебурнет.\n\nЗакройте мастер, чтобы открыть CutVPN в трее.";
-            next.Text = "Готово";
-            next.Enabled = false;
-            return;
-        }
-        pageTitle.Text = titles[page];
-        pageText.Text = texts[page];
-        news.Text = page switch
-        {
-            1 => "Реклама: уничтожение клопов. Услуга не сертифицирована, но очень уверенная.",
-            2 => "Объявление: ГУСЬ ПРОДАЁТСЯ. Торг отсутствует. Кнопка «Купить» морально обязательна.",
-            3 => "Чебурнет сообщает: вязанка успешно передана генсухе.",
-            4 => "Обновление: Framework по доению коровы найден. Осталось доить.",
-            5 => "СРОЧНО: гусь всё отрицает.",
-            6 => "Компоненты проверены. Почти все. Наверное.",
-            _ => "Финальная оптимизация: делаем вид, что всё под контролем."
-        };
-        progressValue = Math.Min(99, page * 12 + 5);
-        progress.Value = progressValue;
+        CreateHandle(new CreateParams());
+        RegisterHotKey(Handle, 9001, MOD_CTRL | MOD_SHIFT, (uint)Keys.G);
     }
 
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == 0x0312)
-        {
-            int id = m.WParam.ToInt32();
-            if (id == 1001) Close();
-            if (id == 1002) { app.EmergencyStop(); Close(); }
-        }
+        if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == 9001) OnStopKey?.Invoke();
         base.WndProc(ref m);
     }
 
-    protected override void OnFormClosed(FormClosedEventArgs e)
+    internal void Destroy()
     {
-        timer.Stop();
-        UnregisterHotKey(Handle, 1001);
-        UnregisterHotKey(Handle, 1002);
-        base.OnFormClosed(e);
+        UnregisterHotKey(Handle, 9001);
+        DestroyHandle();
     }
-
-    [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, int vk);
-    [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 }
 
-internal sealed class FakePoster : Panel
+// ─────────────────────────────────────────────────────────────────────────────
+//  Local agent HTTP server (loopback only)
+// ─────────────────────────────────────────────────────────────────────────────
+internal static class AgentServer
 {
-    protected override void OnPaint(PaintEventArgs e)
+    static System.Net.HttpListener? listener;
+    static Thread? thread;
+    static string secret = "";
+
+    public static event Action<string, JsonElement, Action<object>>? OnCommand;
+
+    internal static void Start()
     {
-        base.OnPaint(e);
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var bg = new SolidBrush(Color.FromArgb(15, 128, 110));
-        e.Graphics.FillRectangle(bg, ClientRectangle);
-        e.Graphics.DrawString("WINDOWS", new Font("Tahoma", 23F, FontStyle.Bold), Brushes.White, 16, 14);
-        e.Graphics.DrawString("ХУЯК-98 XP/VISTA", new Font("Tahoma", 14F, FontStyle.Bold), Brushes.Yellow, 16, 54);
-        using var card = new SolidBrush(Color.FromArgb(240, 240, 240));
-        e.Graphics.FillRectangle(card, 16, 95, Width - 32, 112);
-        e.Graphics.DrawRectangle(Pens.Navy, 16, 95, Width - 32, 112);
-        e.Graphics.DrawString("ВНИМАНИЕ!", new Font("Tahoma", 15F, FontStyle.Bold), Brushes.DarkRed, 28, 110);
-        e.Graphics.DrawString("Гусь подключён к Чебурнету.\nВязанка загружена.\nОсеменение в процессе.", new Font("Tahoma", 9F), Brushes.Black, 28, 141);
-        e.Graphics.FillEllipse(Brushes.White, Width - 86, 113, 46, 46);
-        e.Graphics.FillEllipse(Brushes.DarkGray, Width - 76, 123, 11, 11);
-        e.Graphics.FillEllipse(Brushes.DarkGray, Width - 57, 123, 11, 11);
-        e.Graphics.DrawLine(Pens.Black, Width - 66, 145, Width - 45, 145);
+        // Read secret from agent.json if present
+        if (File.Exists(Paths.AgentJson))
+        {
+            try
+            {
+                var j = JsonDocument.Parse(File.ReadAllText(Paths.AgentJson));
+                if (j.RootElement.TryGetProperty("auth", out var s)) secret = s.GetString() ?? "";
+            }
+            catch { }
+        }
+
+        listener = new System.Net.HttpListener();
+        listener.Prefixes.Add("http://127.0.0.1:8765/");
+        try { listener.Start(); }
+        catch { return; } // port already taken — skip
+
+        thread = new Thread(Loop) { IsBackground = true, Name = "AgentServer" };
+        thread.Start();
+    }
+
+    internal static void Stop() => listener?.Stop();
+
+    static readonly HashSet<string> Allowed = new()
+    {
+        "status","visuals_on","visuals_off","screenshot",
+        "restart","volume","random_error","wallpaper_set",
+        "sound_play","video_play","uninstall"
+    };
+
+    static void Loop()
+    {
+        while (listener?.IsListening == true)
+        {
+            System.Net.HttpListenerContext ctx;
+            try { ctx = listener.GetContext(); }
+            catch { break; }
+
+            Task.Run(() => Handle(ctx));
+        }
+    }
+
+    static void Handle(System.Net.HttpListenerContext ctx)
+    {
+        ctx.Response.ContentType = "application/json";
+
+        if (ctx.Request.HttpMethod != "POST" || ctx.Request.Url?.AbsolutePath != "/command")
+        {
+            Respond(ctx, 404, new { status = "error", message = "not found" });
+            return;
+        }
+
+        JsonDocument doc;
+        try
+        {
+            using var sr = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
+            doc = JsonDocument.Parse(sr.ReadToEnd());
+        }
+        catch { Respond(ctx, 400, new { status = "error", message = "invalid json" }); return; }
+
+        var body = doc.RootElement;
+
+        // Auth
+        if (!string.IsNullOrEmpty(secret))
+        {
+            var provided = body.TryGetProperty("secret", out var s) ? s.GetString() : null;
+            if (provided != secret) { Respond(ctx, 403, new { status = "error", message = "forbidden" }); return; }
+        }
+
+        var command = body.TryGetProperty("command", out var c) ? c.GetString() ?? "" : "";
+        if (!Allowed.Contains(command)) { Respond(ctx, 400, new { status = "error", message = $"unknown: {command}" }); return; }
+
+        object? reply = null;
+        OnCommand?.Invoke(command, body, r => reply = r);
+        Respond(ctx, 200, reply ?? new { status = "ok" });
+    }
+
+    static void Respond(System.Net.HttpListenerContext ctx, int code, object data)
+    {
+        ctx.Response.StatusCode = code;
+        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(data));
+        ctx.Response.OutputStream.Write(bytes);
+        ctx.Response.Close();
     }
 }

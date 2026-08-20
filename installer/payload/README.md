@@ -1,11 +1,29 @@
-# CutVPN component payload
+# payload\ — компоненты CutVPN
 
-Place the official installers you have downloaded into this directory using one of these names:
+Положите сюда официальные установщики, которые вы скачали сами:
 
-- `DesktopGoose.Setup.exe` / `DesktopGoose.exe` / `DesktopGoose.msi`
-- `Cockroach.Setup.exe` / `Cockroach.exe` / `Cockroach.msi`
-- `Workrave.Setup.exe` / `Workrave.exe` / `Workrave.msi`
+## Desktop Goose
+- `DesktopGoose.Setup.exe`  ← предпочтительное имя
+- `DesktopGoose.exe`
+- `DesktopGoose.msi`
 
-The CutVPN Setup wizard starts the selected installers explicitly at visible points during the installation. If a payload is missing, that component is skipped and the wizard continues.
+Скачать: https://samperson.itch.io/desktop-goose
 
-Do not put unknown or modified binaries here; use the official release files you trust.
+## Cockroach on Desktop
+- `CockroachOnDesktop.exe`  ← предпочтительное имя
+- `Cockroach.Setup.exe`
+- `Cockroach.msi`
+
+Скачать: https://store.steampowered.com/app/1267290/
+
+## Workrave
+- `workrave-setup.exe`  ← предпочтительное имя
+- `Workrave.Setup.exe`
+- `Workrave.exe`
+
+Скачать: https://workrave.org/
+
+---
+
+Если нужного файла нет — компонент тихо пропускается, мастер продолжает.
+Не кладите сюда незнакомые бинари.
