@@ -932,25 +932,151 @@ internal sealed class InstallerForm : Form
     // ─────────────────────────────────────────────────────────────────────────
     //  Launch component
     // ─────────────────────────────────────────────────────────────────────────
+    // ── Component install records ─────────────────────────────────────────────
+    record ComponentInfo(
+        string Key,
+        string[] PayloadNames,      // имена файлов в payload\
+        string   WingetId,          // winget install --id
+        string   DownloadUrl,       // прямая ссылка (fallback)
+        string   DownloadName       // имя сохранённого файла
+    );
+
+    static readonly ComponentInfo[] Components = {
+        new("goose",
+            new[]{"DesktopGoose.Setup.exe","DesktopGoose.exe","DesktopGoose.msi"},
+            "samperson.DesktopGoose",
+            "https://github.com/samperson/DesktopGoose/releases/latest/download/GooseDesktop.zip",
+            "DesktopGoose.zip"),
+        new("cockroach",
+            new[]{"CockroachOnDesktop.exe","Cockroach.Setup.exe","Cockroach.exe","Cockroach.msi"},
+            "",   // нет в winget
+            "https://github.com/MouseHatGames/cockroach/releases/latest/download/CockroachOnDesktop-win.zip",
+            "CockroachOnDesktop.zip"),
+        new("workrave",
+            new[]{"workrave-setup.exe","Workrave.Setup.exe","Workrave.exe"},
+            "Workrave.Workrave",
+            "https://github.com/rcaelers/workrave/releases/latest/download/workrave-1.11.0-beta.3-win64.exe",
+            "workrave-setup.exe"),
+        new("telemax",
+            new[]{"TELEMAX.exe","telemax.exe","Telemax.Setup.exe","TELEMAX.msi"},
+            "",
+            "",
+            ""),
+    };
+
     void LaunchComponent(string key)
     {
-        var dir = Path.Combine(AppContext.BaseDirectory, "payload");
-        string[] cands = key switch
+        var info = Array.Find(Components, c => c.Key == key);
+        if (info == null) return;
+
+        // 1. Payload folder — берём первый найденный файл
+        var payloadDir = Path.Combine(AppContext.BaseDirectory, "payload");
+        foreach (var f in info.PayloadNames)
         {
-            "goose"     => new[] { "DesktopGoose.Setup.exe", "DesktopGoose.exe", "DesktopGoose.msi" },
-            "cockroach" => new[] { "CockroachOnDesktop.exe", "Cockroach.Setup.exe", "Cockroach.exe", "Cockroach.msi" },
-            "workrave"  => new[] { "workrave-setup.exe", "Workrave.Setup.exe", "Workrave.exe", "Workrave.msi" },
-            "telemax"   => new[] { "TELEMAX.exe", "telemax.exe", "Telemax.Setup.exe", "TELEMAX.msi" },
-            _           => Array.Empty<string>()
-        };
-        foreach (var f in cands)
-        {
-            var full = Path.Combine(dir, f);
+            var full = Path.Combine(payloadDir, f);
             if (!File.Exists(full)) continue;
-            try { Process.Start(new ProcessStartInfo(full) { UseShellExecute = true, WorkingDirectory = dir }); return; }
-            catch (Exception ex) { MessageBox.Show($"Не удалось запустить {f}:\n{ex.Message}", "CutVPN", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            RunInstaller(full, payloadDir);
+            return;
         }
-        // Не нашли — молча пропускаем
+
+        // 2. winget
+        if (!string.IsNullOrEmpty(info.WingetId) && TryWinget(info.WingetId))
+            return;
+
+        // 3. Прямое скачивание + запуск
+        if (!string.IsNullOrEmpty(info.DownloadUrl))
+            TryDownloadAndRun(info.DownloadUrl, info.DownloadName, key);
+
+        // Telemax: нет реального установщика — тихо пропускаем
+    }
+
+    static void RunInstaller(string path, string workDir)
+    {
+        try
+        {
+            var ext = Path.GetExtension(path).ToLowerInvariant();
+            ProcessStartInfo psi;
+            if (ext == ".msi")
+                psi = new ProcessStartInfo("msiexec", $"/i \"{path}\" /qb")
+                    { UseShellExecute = true };
+            else
+                psi = new ProcessStartInfo(path) { UseShellExecute = true, WorkingDirectory = workDir };
+            Process.Start(psi);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Не удалось запустить {Path.GetFileName(path)}:\n{ex.Message}",
+                "CutVPN", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    static bool TryWinget(string packageId)
+    {
+        try
+        {
+            // Проверяем наличие winget
+            var check = Process.Start(new ProcessStartInfo("winget", "--version")
+            {
+                UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true
+            });
+            check?.WaitForExit(3000);
+            if (check?.ExitCode != 0) return false;
+
+            // Запускаем установку
+            Process.Start(new ProcessStartInfo(
+                "winget",
+                $"install --id {packageId} --silent --accept-package-agreements --accept-source-agreements")
+            {
+                UseShellExecute = true   // показываем окно winget
+            });
+            return true;
+        }
+        catch { return false; }
+    }
+
+    static void TryDownloadAndRun(string url, string fileName, string key)
+    {
+        var tmpDir  = Path.Combine(Path.GetTempPath(), "CutVPN_setup");
+        var tmpFile = Path.Combine(tmpDir, fileName);
+        Directory.CreateDirectory(tmpDir);
+        try
+        {
+            // Скачиваем через PowerShell (встроен в Win10+)
+            var ps = $"Invoke-WebRequest -Uri '{url}' -OutFile '{tmpFile}' -UseBasicParsing";
+            var dl = Process.Start(new ProcessStartInfo(
+                "powershell", $"-NonInteractive -NoProfile -Command \"{ps}\"")
+            { UseShellExecute = false, CreateNoWindow = true });
+            dl?.WaitForExit(120_000);   // 2 минуты
+
+            if (!File.Exists(tmpFile)) return;
+
+            var ext = Path.GetExtension(fileName).ToLowerInvariant();
+            if (ext == ".zip")
+            {
+                // Распаковываем
+                var extractDir = Path.Combine(tmpDir, key + "_extracted");
+                var unzip = $"Expand-Archive -Path '{tmpFile}' -DestinationPath '{extractDir}' -Force";
+                var uz = Process.Start(new ProcessStartInfo(
+                    "powershell", $"-NonInteractive -NoProfile -Command \"{unzip}\"")
+                { UseShellExecute = false, CreateNoWindow = true });
+                uz?.WaitForExit(60_000);
+
+                // Ищем .exe в распакованном
+                var exes = Directory.GetFiles(extractDir, "*.exe", SearchOption.AllDirectories);
+                if (exes.Length > 0)
+                    RunInstaller(exes[0], Path.GetDirectoryName(exes[0])!);
+            }
+            else
+            {
+                RunInstaller(tmpFile, tmpDir);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Ошибка при установке {key}:\n{ex.Message}",
+                "CutVPN", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
